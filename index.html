@@ -7,7 +7,6 @@
   body { margin:0; background:var(--ink); color:var(--paper); overflow:hidden; font-family:Georgia, serif; }
   canvas { position:fixed; inset:0; width:100%; height:100%; display:block; }
   body.idle, body.idle canvas { cursor:none; }
-  #start { position:fixed; inset:0; z-index:3; display:grid; place-items:center; padding:16px; background:var(--ink); }
   .card { display:grid; gap:1.2rem; max-width:32rem; }
   .card h1 { font-weight:400; font-size:clamp(2.2rem,7vw,3.6rem); margin:0; }
   .card p { margin:0; line-height:1.55; color:var(--dim); }
@@ -17,17 +16,20 @@
   button:focus-visible { outline:2px solid var(--paper); outline-offset:4px; }
   #status { position:fixed; left:16px; bottom:calc(14px + env(safe-area-inset-bottom,0px)); z-index:2;
     font:12px ui-monospace, Menlo, monospace; color:var(--paper); background:rgba(0,0,0,.6); padding:.35rem .6rem; }
+  @font-face { font-family:'JasonThinCSS'; src:url(assets/fonts/Jason3-BrushThin.ttf); }
+  #enter { position:fixed; left:50%; top:calc(50% + clamp(34px, 6vh, 70px)); transform:translateX(-50%); z-index:3;
+    font:clamp(20px, 2.4vw, 34px) 'JasonThinCSS', Georgia, serif; letter-spacing:.08em; text-transform:none;
+    color:var(--paper); background:none; border:0; padding:.4em 1em; cursor:pointer; opacity:0; transition:opacity 2.4s ease; }
+  #loadline { position:fixed; left:50%; top:calc(50% + clamp(52px, 8vh, 92px)); width:clamp(80px, 10vw, 160px); height:1px; z-index:2;
+    transform:translateX(-50%); background:linear-gradient(90deg, rgba(223,227,210,.35) calc(var(--p, 0) * 100%), transparent 0); transition:opacity 1.2s; }
+  #loadline.done { opacity:0; }
+  #enter.on { opacity:.55; }
+  #enter:hover, #enter:focus-visible { opacity:1; outline:none; }
 </style>
 
 <canvas id="c"></canvas>
-<div id="start">
-  <div class="card">
-    <h1>nobody remembers. dad does.</h1>
-    <p>Four frames, about five minutes, looping. Each begins as one moment; others bleed in until you notice it was never one photograph. Between them, fragments of other moments flash past. Some come back and become the next frame. Some just flutter away. Test sound: wind, rain, a low tone and the room, each rising and falling on its own.</p>
-    <button id="go">Begin</button>
-    <div class="keys">Click the writing to read it · click again to step back · click anywhere else to bring up the words, then to move on · F fullscreen · Space pause · N next frame · ← → 10 s · [ ] speed · Z flash now · X flashes on/off · S sound · − + volume · G grain · I timecode</div>
-  </div>
-</div>
+<div id="loadline"></div>
+<button id="enter" hidden>enter</button>
 <div id="status" hidden></div>
 
 <script>
@@ -260,6 +262,7 @@ function scheduler(){
   const start = nextFrameStart() + 1.5, idx = Math.round(start * 10);
   if (start - t < 7 && !becomeDone.has(idx) && frameIdx((start + .01) % LOOP) >= 0){ becomeDone.add(idx);
     const nk = frameIdx((start + .01) % LOOP), f = M.frames[Math.max(0, nk)], im = imgs[f.layers.base.src];
+    if (!im){ becomeDone.delete(idx); return; }
     (nk === 0 ? [[-1.4, .16, 4]] : [[-6.2, .22, 2], [-4.1, .3, 3], [-2.4, .45, 3], [-1.1, .5, 5]]).forEach(([dt, a, n]) => schedule(start + dt, { kind:'img', im, a, dur:n / 24 })); }
   flashes = flashes.filter(e => t < e.t0 + e.dur + .5);
 }
@@ -314,7 +317,7 @@ function startAudio(){
     const dg = AC.createGain(); dg.gain.value = .35; drops.connect(dg); dg.connect(AUD.rain);
     // tone: a low open fifth, slightly detuned, breathing
     const tg = layer('tone'); const tl = AC.createBiquadFilter(); tl.type = 'lowpass'; tl.frequency.value = 600; tl.connect(tg);
-    [[55, .5], [55.35, .4], [82.4, .28], [110.2, .12], [164.8, .05]].forEach(([f, a]) => { const o = AC.createOscillator(); o.type = 'triangle'; o.frequency.value = f;
+    [[55, .5], [55.35, .4], [82.4, .28], [110.2, .3], [164.8, .15], [220.4, .08]].forEach(([f, a]) => { const o = AC.createOscillator(); o.type = 'triangle'; o.frequency.value = f;
       const g = AC.createGain(); g.gain.value = a * .22; o.connect(g); g.connect(tl); o.start(); });
     // the room: very low, very quiet
     const room = loopSrc(noiseBuf('brown', 6)); const rmf = AC.createBiquadFilter(); rmf.type = 'lowpass'; rmf.frequency.value = 180; room.connect(rmf); rmf.connect(layer('room'));
@@ -336,8 +339,8 @@ function updateAudio(t, loopT){
     const m = MIX[M.frames[k].name]; for (const key in w) w[key] = Math.max(w[key], m[key] * Math.max(0, pres)); }
   const now = AC.currentTime;
   const set = (g, v) => g.gain.setTargetAtTime(v, now, 1.8);
-  set(AUD.wind, w.wind * (.25 + .75 * drift(t, 7.3, 13.1, 29)) * .55);
-  set(AUD.rain, w.rain * (.2 + .8 * drift(t + 40, 11.7, 5.9, 23)) * .5);
+  set(AUD.wind, w.wind * (.25 + .75 * drift(t, 7.3, 13.1, 29)) * .8);
+  set(AUD.rain, w.rain * (.2 + .8 * drift(t + 40, 11.7, 5.9, 23)) * .75);
   set(AUD.tone, w.tone * (.3 + .7 * drift(t + 90, 17, 31, 9.1)) * .6);
   set(AUD.room, w.room * .35);
   AUD.windF.frequency.setTargetAtTime(220 + 380 * drift(t + 12, 4.1, 9.3, 17), now, 1.2);
@@ -389,6 +392,7 @@ const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2,
 function tick(now){
   const dt = Math.min(.1, (now - last) / 1000); last = now;
   if (started && !paused && !reading) clock += dt * speed;
+  if (!entered && clock > 3.4) clock = 3.4;   // hold the title until someone enters
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.fillStyle = '#050705'; ctx.fillRect(0, 0, W, H);
   if (started && M){
     const t = clock % LOOP, n = M.frames.length;
@@ -406,22 +410,37 @@ function tick(now){
     if (flashOn){ scheduler(); drawFlashes(); }
     updateAudio(clock, t);
     ctx.restore();
-    if (showTC){ const k = Math.max(0, frameIdx(t)); statusEl.textContent = `${fmt(t)} / ${fmt(LOOP)} · ${M.frames[k].name} ${fmt(t - (OFF + k * STEP))}${speed !== 1 ? ' · ' + speed + '×' : ''}`; }
+    if (showTC){ const k = Math.max(0, frameIdx(t)); statusEl.textContent = `${fmt(t)} / ${fmt(LOOP)} · ${M.frames[k].name} ${fmt(t - (OFF + k * STEP))}${speed !== 1 ? ' · ' + speed + '×' : ''}${failed.length ? ' · missing: ' + failed.map(u => u.split('/').pop()).join(', ') : ''}`; }
   }
   film(paused ? 0 : dt);
   requestAnimationFrame(tick);
 }
 
+// loading: the title comes up as soon as the manifest and fonts are here; the pictures keep arriving underneath,
+// a faint pencil line under the title draws across as they do, and only when every file is in does it become "enter".
+let loaded = 0, total = 1, failed = [];
+function loadImg(url, keep){ return new Promise(res => { let tries = 0;
+  const go = () => { const im = new Image(); im.decoding = 'async';
+    im.onload = () => { (im.decode ? im.decode().catch(() => {}) : Promise.resolve()).then(() => { keep(im); loaded++; res(); }); };
+    im.onerror = () => { if (++tries < 3) setTimeout(go, 600 * tries); else { failed.push(url); loaded++; res(); } };
+    im.src = url + (tries ? '?r=' + tries : ''); };
+  go(); }); }
+let titleReady;
 async function boot(){
   M = await (await fetch(BASE + 'manifest.json')).json(); LOOP = OFF + STEP * M.frames.length;
-  FL = await (await fetch(BASE + 'flash/flash.json')).json();
-  const fsrcs = [...FL.singles, ...(FL.people || []), ...Object.values(FL.seqs).flat()];
   const fontLoads = [['JasonThin', 'Jason3-BrushThin.ttf'], ['JasonLight', 'Jason1-BrushLight.ttf']].map(([n, f]) =>
     new FontFace(n, `url(${BASE}fonts/${f})`).load().then(ff => document.fonts.add(ff)).catch(() => {}));
-  await Promise.all([...fontLoads, ...fsrcs.map(s => new Promise(res => { const im = new Image(); im.onload = () => { fimgs[s] = im; res(); }; im.onerror = res; im.src = BASE + 'flash/' + s; }))]);
+  await Promise.all(fontLoads); resize(); titleReady = true;
+  FL = await (await fetch(BASE + 'flash/flash.json')).json();
+  const fsrcs = [...FL.singles, ...(FL.people || []), ...Object.values(FL.seqs).flat()];
   const srcs = new Set(); for (const f of M.frames) for (const v of Object.values(f.layers)) srcs.add(v.src);
-  await Promise.all([...srcs].map(s => new Promise(res => { const im = new Image(); im.onload = () => { imgs[s] = im; res(); }; im.onerror = res; im.src = BASE + s; })));
-  resize();
+  total = srcs.size + fsrcs.length;
+  // the first frame's pictures first, so they are certainly there when it begins
+  const first = new Set(Object.values(M.frames[0].layers).map(v => v.src));
+  const order = [...first, ...[...srcs].filter(s => !first.has(s))];
+  await Promise.all(order.map(s => loadImg(BASE + s, im => imgs[s] = im)));
+  await Promise.all(fsrcs.map(s => loadImg(BASE + 'flash/' + s, im => fimgs[s] = im)));
+  if (failed.length) console.warn('could not load', failed);
 }
 const ready = boot();
 let idleT; function wake(){ document.body.classList.remove('idle'); clearTimeout(idleT); idleT = setTimeout(() => document.body.classList.add('idle'), 2500); }
@@ -431,7 +450,7 @@ function stepBack(){ const ar = autoRead(clock % LOOP);
   if (reading){ outFrom = { f:reading.f, w:reading.w }; reading = null; }
   else if (ar && ar.w > 0){ outFrom = { f:ar.f, w:ar.w }; }
   if (ar) dismissed.add(ar.visit); }
-cv.addEventListener('pointerdown', e => { if (!started) return;
+cv.addEventListener('pointerdown', e => { if (!entered){ if (started) enter(); return; } if (firstTouch()) return; if (!started) return;
   // zoomed in on the words: any click steps back
   if (zoomed || reading){ stepBack(); return; }
   const f = inkUnder(e.clientX, e.clientY);
@@ -442,12 +461,28 @@ cv.addEventListener('pointerdown', e => { if (!started) return;
   const lt = t - (OFF + k * STEP), ink = SCORES[M.frames[k].name].find(l => l[0] === 'ink'), ready = ink[1] + ink[2];
   if (lt < ready) clock += ready - lt;
   else clock = nextFrameStart(); });
-document.getElementById('go').onclick = async () => {
-  document.getElementById('start').hidden = true; startAudio(); await ready; started = true; wake();
-  try { document.documentElement.requestFullscreen?.().catch(() => {}); } catch(e){}
-  try { navigator.wakeLock?.request('screen').catch(() => {}); } catch(e){}
-};
-addEventListener('keydown', e => { const k = e.key.toLowerCase(); wake();
+// no start screen: the piece begins on its own with the title. Browsers only allow sound after a first
+// click or key, so that first touch starts the sound and does nothing else.
+const startWhenTitle = setInterval(() => { if (!titleReady) return; clearInterval(startWhenTitle); started = true; wake(); }, 50);
+ready.then(() => { try { navigator.wakeLock?.request('screen').catch(() => {}); } catch(e){}
+  const show = () => { if (clock < 2.6) return setTimeout(show, 200); loadLine.classList.add('done'); enterBtn.hidden = false; requestAnimationFrame(() => enterBtn.classList.add('on')); enterBtn.focus({ preventScroll:true }); };
+  show(); });
+const loadLine = document.getElementById('loadline');
+setInterval(() => { if (!loadLine.classList.contains('done')) loadLine.style.setProperty('--p', Math.min(1, loaded / total)); }, 100);
+// the title waits under a quiet "enter": that click is what lets the browser play sound, so the sound is there from the start
+let entered = false; const enterBtn = document.getElementById('enter');
+function enter(){ if (entered) return; entered = true; heard = true; unlockAudio(); enterBtn.classList.remove('on'); setTimeout(() => enterBtn.hidden = true, 900);
+  try { document.documentElement.requestFullscreen?.().catch(() => {}); } catch(e){} }
+enterBtn.addEventListener('click', e => { e.stopPropagation(); enter(); });
+let heard = false;
+function unlockAudio(){   // Safari and iOS only count some gestures, so every kind of touch tries again until sound is running
+  try { if (!AC) startAudio(); if (!AC) return;
+    if (AC.state !== 'running') AC.resume();
+    const b = AC.createBuffer(1, 1, 22050), s = AC.createBufferSource(); s.buffer = b; s.connect(AC.destination); s.start(0);
+  } catch(e){} }
+['click', 'pointerup', 'touchend', 'keydown', 'mousedown'].forEach(ev => addEventListener(ev, unlockAudio, { capture:true }));
+function firstTouch(e){ if (heard) return false; heard = true; unlockAudio(); return true; }
+addEventListener('keydown', e => { const k = e.key.toLowerCase(); wake(); if (!entered){ if (k === 'enter' || k === ' '){ e.preventDefault(); enter(); } return; } if (firstTouch() && k !== 'f') return;
   if (k === 'f'){ if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.().catch(() => {}); }
   else if (k === ' '){ e.preventDefault(); paused = !paused; }
   else if (k === 'escape'){ stepBack(); }

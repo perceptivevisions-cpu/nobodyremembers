@@ -48,7 +48,7 @@ addEventListener('resize', resize);
 
 // ---------------- the score ----------------
 // per frame: [layer, in, fadeIn, out, fadeOut] in seconds from the frame's start
-const STEP = 50, OFF = 8;   // each frame 50 s: it moves on soon after the reading lets go (78 s left long empty stretches)   // OFF: the title, before the first frame
+const STEP = 78, OFF = 8;   // OFF: the title, before the first frame
 function frameIdx(t){ return t < OFF ? -1 : Math.min(M.frames.length - 1, Math.floor((t - OFF) / STEP)); }
 function nextFrameStart(){ const base = Math.floor(clock / LOOP) * LOOP, t = clock - base, k = frameIdx(t);
   if (k < 0) return base + OFF - .5;
@@ -63,6 +63,9 @@ const SCORES = {
   cloud:   [ ['base', 0, 8, 60, 9], ['mid', 6, 10, 58, 8], ['right', 13, 12, 56, 10], ['ink', 11, 8, 72, 11] ],
   lake:    [ ['base', 0, 7, 64, 9], ['him', 1, 9, 60, 8], ['ink', 11, 8, 72, 11] ],
 };
+// every frame is gone before the next has fully arrived, and the last one is gone before the loop returns to the title
+// (otherwise the lake's tail showed behind the title and "enter")
+for (const [name, sc] of Object.entries(SCORES)) for (const line of sc){ line[3] = Math.min(line[3], STEP - (name === 'lake' ? 20 : 4)); }
 const BREATHE = { forest:'echo', cloud:'mid', bedroom:'wide', fjord:'mid', skywater:'water', barn:'right' };   // which moment breathes between its bracket exposures
 let LOOP = 0;
 
@@ -238,7 +241,7 @@ function titleCanvas(){
 function schedule(t0, ev){ ev.t0 = t0; flashes.push(ev); }
 let lastPuff = 0;
 function cluster(t){
-  const n = 1 + Math.floor(Math.random() * 4); let tt = t;
+  const n = 1 + Math.floor(Math.random() * 2.4); let tt = t;
   for (let i = 0; i < n; i++){
     const r = Math.random(), dur = f => f / 24;
     if (r < .3){                         // a glimpse of another moment, whole
@@ -259,7 +262,7 @@ function cluster(t){
 }
 function scheduler(){
   const t = clock;
-  if (t > nextCluster){ if (t % LOOP > OFF + 30) cluster(t); nextCluster = t + R(9, 26); }   // after the title, the first frame is left alone for a while
+  if (t > nextCluster){ if (t % LOOP > OFF + 30) cluster(t); nextCluster = t + R(20, 42); }   // flashes are rarer: they are glimpses, not a rhythm   // after the title, the first frame is left alone for a while
   // the next frame arrives in glimpses before it becomes
   const start = nextFrameStart() + 1.5, idx = Math.round(start * 10);
   if (start - t < 7 && !becomeDone.has(idx) && frameIdx((start + .01) % LOOP) >= 0){ becomeDone.add(idx);
@@ -420,6 +423,7 @@ function frame(now){
     zoomed = view.z > 1.05;
     ctx.save(); ctx.translate(weave.x * fit.s, weave.y * fit.s);
     // the previous frame's tail, then the current frame
+    if (t < OFF + 5) drawOpen(t);   // under everything, so the bedroom develops over the last house
     for (let k = 0; k < n; k++){ let lt = t - (OFF + k * STEP); if (lt < -LOOP / 2) lt += LOOP; if (lt > LOOP / 2) lt -= LOOP;
       if (lt > -1 && lt < STEP + 20) drawFrame(M.frames[k], lt); }
     if (t < OFF + 1){ const ta = Math.min((t - .5) / 2.6, 1 - (t - (OFF - 3.2)) / 2.6);
@@ -444,11 +448,24 @@ function loadImg(url, keep){ return new Promise(res => { let tries = 0;
     im.src = url + (tries ? '?r=' + tries : ''); };
   go(); }); }
 let titleReady;
+// the opening: three dark houses fading in and out over each other behind the title, until you enter
+const OPEN = ['open-1.jpg', 'open-2.jpg', 'open-3.jpg'], openImgs = []; let openT0 = 0;
+function drawOpen(t){
+  const env = Math.min(ease((t - .2) / 3), 1 - ease((t - (OFF - 3)) / 5));   // in with the title, out as the first frame arrives
+  if (env <= 0) return;
+  const w = performance.now() / 1000 - openT0, P = 7.5, n = OPEN.length;   // real time, so it keeps moving while the title waits
+  for (let i = 0; i < n; i++){ const im = openImgs[i]; if (!im) continue;
+    let ph = ((w / P - i) % n + n) % n;                    // 0..n: this photo's place in the cycle
+    const a = ph < 1 ? ease(ph) : ph < 1.6 ? 1 : ph < 2.6 ? 1 - ease(ph - 1.6) : 0;
+    if (a <= 0) continue; ctx.globalAlpha = a * env * .8;
+    ctx.drawImage(im, fit.x, fit.y, M.w * fit.s, M.h * fit.s); }
+  ctx.globalAlpha = 1;
+}
 async function boot(){
   M = await (await fetch(BASE + 'manifest.json')).json(); LOOP = OFF + STEP * M.frames.length;
   const fontLoads = [['JasonThin', 'Jason3-BrushThin.ttf'], ['JasonLight', 'Jason1-BrushLight.ttf']].map(([n, f]) =>
     new FontFace(n, `url(${BASE}fonts/${f})`).load().then(ff => document.fonts.add(ff)).catch(() => {}));
-  await Promise.all(fontLoads); resize(); titleReady = true;
+  await Promise.all([...fontLoads, ...OPEN.map((f, i) => loadImg(BASE + f, im => openImgs[i] = im))]); resize(); titleReady = true; openT0 = performance.now() / 1000;
   FL = await (await fetch(BASE + 'flash/flash.json')).json();
   const fsrcs = [...FL.singles, ...(FL.people || []), ...Object.values(FL.seqs).flat()];
   const srcs = new Set(); for (const f of M.frames) for (const v of Object.values(f.layers)) srcs.add(v.src);

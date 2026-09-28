@@ -48,7 +48,7 @@ addEventListener('resize', resize);
 
 // ---------------- the score ----------------
 // per frame: [layer, in, fadeIn, out, fadeOut] in seconds from the frame's start
-const STEP = 78, OFF = 8;   // OFF: the title, before the first frame
+const STEP = 50, OFF = 8;   // each frame 50 s: it moves on soon after the reading lets go (78 s left long empty stretches)   // OFF: the title, before the first frame
 function frameIdx(t){ return t < OFF ? -1 : Math.min(M.frames.length - 1, Math.floor((t - OFF) / STEP)); }
 function nextFrameStart(){ const base = Math.floor(clock / LOOP) * LOOP, t = clock - base, k = frameIdx(t);
   if (k < 0) return base + OFF - .5;
@@ -128,7 +128,7 @@ function autoRead(t){   // once in each frame, after the words have developed, i
     const visit = k + ':' + Math.floor((clock - (OFF + k * STEP)) / LOOP);
     if (dismissed.has(visit)) return { f, w:0, visit, dismissedAt:true };
     const w = u < 3.5 ? ease(u / 3.5) : u < 3.5 + hold ? 1 : 1 - ease((u - 3.5 - hold) / 3.5);
-    return { f, w, visit }; }
+    return { f, w, visit, prog:Math.min(1, u / (hold + 7)) }; }
   return null;
 }
 function applyView(target, w){
@@ -275,6 +275,7 @@ function drawFlashes(){
     if (!e.heard && e.kind === 'img'){ e.heard = true; if (clock - lastPuff > .5){ lastPuff = clock; puff(e.a); } }
     const u = t - e.t0, f = e.fade ? Math.min(1, u / e.fade, (e.dur - u) / e.fade) : 1, a = e.a * Math.max(0, f);
     ctx.globalAlpha = a;
+    if (e.kind === 'img' && !e.im) continue;
     if (e.kind === 'img'){ const [x, y, w, h] = coverRectD(e.im); ctx.drawImage(e.im, fit.x + x * fit.s, fit.y + y * fit.s, w * fit.s, h * fit.s); }
     else if (e.kind === 'canvas'){ ctx.save(); ctx.globalCompositeOperation = 'screen'; drawWC(e.c, e.c, fit.x, fit.y, M.w * fit.s, M.h * fit.s, Math.max(0, Math.min(1, f)), e.a); ctx.restore(); }
     else if (e.kind === 'word'){ ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.fillStyle = '#d9e0cc';
@@ -395,7 +396,12 @@ function film(dt){
 let fps = 60, clock = 0, last = performance.now(), paused = false, started = false, showTC = false, speed = 1;
 const statusEl = document.getElementById('status');
 const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+let lastErr = '';
 function tick(now){
+  requestAnimationFrame(tick);   // schedule the next frame first: an error in one frame can never stop the piece again
+  try { frame(now); } catch(e){ lastErr = (e && e.message) || String(e); console.error(e); try { ctx.restore(); ctx.restore(); } catch(_){} }
+}
+function frame(now){
   const dt = Math.min(.5, (now - last) / 1000); last = now; fps = fps * .95 + (dt > 0 ? 1 / dt : 60) * .05;
   if (started && !paused) clock += dt * speed;   // reading no longer stops the clock (a click on the words could look like a freeze)
   if (!entered && clock > 3.4) clock = 3.4;   // hold the title until someone enters
@@ -406,7 +412,11 @@ function tick(now){
       if (clock - reading.startedAt >= 8){ outFrom = { f:reading.f, w:reading.w }; reading = null; }   // a read lets go on its own after 8 s
       else applyView(readTarget(reading.f), ease(reading.w)); }
     else if (outFrom){ outFrom.w -= dt / 1.2; if (outFrom.w <= 0) outFrom = null; else applyView(readTarget(outFrom.f), ease(outFrom.w)); }
-    else { const ar = autoRead(t); applyView(ar && !ar.dismissedAt && readTarget(ar.f), ar && !ar.dismissedAt ? ar.w : 0); }
+    else { const ar = autoRead(t); let tg = ar && !ar.dismissedAt && readTarget(ar.f);
+      if (tg){ const b = inkBox(ar.f), q = ar.prog;   // while reading, the eye keeps moving: a slow drift along the lines and a slight lean closer
+        const z = tg.z * (1 + .07 * q), hw = M.w / 2 / z, hh = M.h / 2 / z;
+        tg = { z, x:Math.min(M.w - hw, Math.max(hw, tg.x + (q - .45) * b.w * .14)), y:Math.min(M.h - hh, Math.max(hh, tg.y + (q - .5) * b.h * .12)) }; }
+      applyView(tg, ar && !ar.dismissedAt ? ar.w : 0); }
     zoomed = view.z > 1.05;
     ctx.save(); ctx.translate(weave.x * fit.s, weave.y * fit.s);
     // the previous frame's tail, then the current frame
@@ -418,10 +428,9 @@ function tick(now){
     if (flashOn){ scheduler(); drawFlashes(); }
     updateAudio(clock, t);
     ctx.restore();
-    if (showTC){ const k = Math.max(0, frameIdx(t)); statusEl.textContent = `${fmt(t)} / ${fmt(LOOP)} · ${M.frames[k].name} ${fmt(t - (OFF + k * STEP))}${speed !== 1 ? ' · ' + speed + '×' : ''}${' · ' + Math.round(fps) + ' fps · ' + W + '×' + H + ' · ' + loaded + '/' + total}${failed.length ? ' · missing: ' + failed.map(u => u.split('/').pop()).join(', ') : ''}`; }
+    if (showTC){ const k = Math.max(0, frameIdx(t)); statusEl.textContent = `${fmt(t)} / ${fmt(LOOP)} · ${M.frames[k].name} ${fmt(t - (OFF + k * STEP))}${speed !== 1 ? ' · ' + speed + '×' : ''}${' · ' + Math.round(fps) + ' fps · ' + W + '×' + H + ' · ' + loaded + '/' + total}${lastErr ? ' · error: ' + lastErr : ''}${failed.length ? ' · missing: ' + failed.map(u => u.split('/').pop()).join(', ') : ''}`; }
   }
   film(paused ? 0 : dt);
-  requestAnimationFrame(tick);
 }
 
 // loading: the title comes up as soon as the manifest and fonts are here; the pictures keep arriving underneath,

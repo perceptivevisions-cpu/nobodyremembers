@@ -40,7 +40,9 @@ const R = (a, b) => a + Math.random() * (b - a);
 const ease = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x);
 const develop = x => x <= 0 ? 0 : x >= 1 ? 1 : ease(Math.pow(x, 1.8));   // slow to start, like a print in the tray
 
-function resize(){ const d = Math.min(2, devicePixelRatio || 1); W = innerWidth * d; H = innerHeight * d; cv.width = W; cv.height = H;
+function resize(){   // the pictures are 1920 wide: a bigger canvas only costs speed (Retina screens were running 4000px canvases)
+  const d = Math.min(devicePixelRatio || 1, 1920 / innerWidth, 1080 / innerHeight) || 1;
+  W = Math.round(innerWidth * Math.max(d, .5)); H = Math.round(innerHeight * Math.max(d, .5)); cv.width = W; cv.height = H;
   if (M){ const s = Math.min(W / M.w, H / M.h); fit = { s, x:(W - M.w * s) / 2, y:(H - M.h * s) / 2 }; } }
 addEventListener('resize', resize);
 
@@ -132,7 +134,7 @@ function autoRead(t){   // once in each frame, after the words have developed, i
 function applyView(target, w){
   if (!target || w <= 0){ view = { z:1, x:M.w / 2, y:M.h / 2 }; return; }
   view = { z:Math.exp(Math.log(target.z) * w), x:M.w / 2 + (target.x - M.w / 2) * w, y:M.h / 2 + (target.y - M.h / 2) * w }; }
-function toDesign(sx, sy){ const d = Math.min(2, devicePixelRatio || 1);
+function toDesign(sx, sy){ const d = W / innerWidth;
   return { x:view.x + ((sx * d - fit.x) / fit.s - M.w / 2) / view.z, y:view.y + ((sy * d - fit.y) / fit.s - M.h / 2) / view.z }; }
 function inkUnder(sx, sy){ if (!M) return null; const t = clock % LOOP, p = toDesign(sx, sy);
   for (let k = 0; k < M.frames.length; k++){ const f = M.frames[k]; let lt = t - (OFF + k * STEP); if (lt < -LOOP / 2) lt += LOOP; if (lt > LOOP / 2) lt -= LOOP;
@@ -355,7 +357,7 @@ function setSound(on){ soundOn = on; if (!AC){ if (on) startAudio(); return; } i
   master.gain.setTargetAtTime(on ? vol : 0, AC.currentTime, .8); }
 
 // ---------------- film ----------------
-const GS = 384, grainFrames = [];
+const GS = 384, grainFrames = [], speckFrames = [];
 (function(){
   for (let k = 0; k < 8; k++){
     const sm = document.createElement('canvas'); sm.width = sm.height = GS / 3; const sc = sm.getContext('2d'), sd = sc.createImageData(GS / 3, GS / 3);
@@ -365,6 +367,10 @@ const GS = 384, grainFrames = [];
     const f = x.getImageData(0, 0, GS, GS), d = f.data;
     for (let i = 0; i < d.length; i += 4){ const n = (Math.random() + Math.random() + Math.random() - 1.5) * 70; const v = Math.max(0, Math.min(255, 128 + (d[i] - 128) * .55 + n)); d[i] = d[i+1] = d[i+2] = v; }
     x.putImageData(f, 0, 0); grainFrames.push(c);
+    // the same grain as specks with their own alpha, light and dark, so it shows in the blacks without a blend mode
+    const sc2 = document.createElement('canvas'); sc2.width = sc2.height = GS; const x2 = sc2.getContext('2d'), g2 = x2.createImageData(GS, GS), e = g2.data;
+    for (let i = 0; i < d.length; i += 4){ const dv = (d[i] - 128) / 128; e[i] = e[i+1] = e[i+2] = dv > 0 ? 235 : 0; e[i+3] = Math.min(255, Math.abs(dv) * (dv > 0 ? 46 : 60)); }
+    x2.putImageData(g2, 0, 0); speckFrames.push(sc2);
   }
 })();
 let filmT = 0, gi = 0, flick = 0, weave = { x:0, y:0 }, dust = [], grainOn = true;
@@ -377,26 +383,28 @@ function film(dt){
   const v = ctx.createRadialGradient(W/2, H/2, Math.min(W, H) * .38, W/2, H/2, Math.max(W, H) * .72);
   v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,.5)'); ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = `rgba(0,0,0,${flick})`; ctx.fillRect(0, 0, W, H);
-  if (grainOn){ ctx.save(); ctx.globalCompositeOperation = 'overlay'; ctx.globalAlpha = .2;
-    const pat = ctx.createPattern(grainFrames[gi], 'repeat'); pat.setTransform?.(new DOMMatrix().translate(R(0, GS), R(0, GS)).scale(Math.max(1, 1.4 * W / 1920)));
-    ctx.fillStyle = pat; ctx.fillRect(0, 0, W, H);
-    ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = .075; ctx.fillRect(0, 0, W, H);
-    ctx.globalCompositeOperation = 'multiply'; ctx.globalAlpha = .1; ctx.fillRect(0, 0, W, H); ctx.restore(); }
+  if (grainOn){ ctx.save();
+    // grain in the shadows too: one plain pass of light-and-dark specks (the old screen + multiply passes cost most of the frame rate)
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+    const sp = ctx.createPattern(speckFrames[gi], 'repeat'); sp.setTransform?.(new DOMMatrix().translate(R(0, GS), R(0, GS)).scale(Math.max(1, 1.4 * W / 1920)));
+    ctx.fillStyle = sp; ctx.fillRect(0, 0, W, H); ctx.restore(); }
   for (const d of dust){ ctx.fillStyle = d.l ? 'rgba(235,235,220,.5)' : 'rgba(0,0,0,.55)'; ctx.beginPath(); ctx.ellipse(d.x, d.y, d.r, d.r * .7, d.a, 0, 6.28); ctx.fill(); }
 }
 
 // ---------------- loop ----------------
-let clock = 0, last = performance.now(), paused = false, started = false, showTC = false, speed = 1;
+let fps = 60, clock = 0, last = performance.now(), paused = false, started = false, showTC = false, speed = 1;
 const statusEl = document.getElementById('status');
 const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 function tick(now){
-  const dt = Math.min(.1, (now - last) / 1000); last = now;
-  if (started && !paused && !reading) clock += dt * speed;
+  const dt = Math.min(.5, (now - last) / 1000); last = now; fps = fps * .95 + (dt > 0 ? 1 / dt : 60) * .05;
+  if (started && !paused) clock += dt * speed;   // reading no longer stops the clock (a click on the words could look like a freeze)
   if (!entered && clock > 3.4) clock = 3.4;   // hold the title until someone enters
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.fillStyle = '#050705'; ctx.fillRect(0, 0, W, H);
   if (started && M){
     const t = clock % LOOP, n = M.frames.length;
-    if (reading){ reading.w = Math.min(1, reading.w + dt / 1.8); applyView(readTarget(reading.f), ease(reading.w)); }
+    if (reading){ reading.w = Math.min(1, reading.w + dt / 1.8);
+      if (clock - reading.startedAt >= 8){ outFrom = { f:reading.f, w:reading.w }; reading = null; }   // a read lets go on its own after 8 s
+      else applyView(readTarget(reading.f), ease(reading.w)); }
     else if (outFrom){ outFrom.w -= dt / 1.2; if (outFrom.w <= 0) outFrom = null; else applyView(readTarget(outFrom.f), ease(outFrom.w)); }
     else { const ar = autoRead(t); applyView(ar && !ar.dismissedAt && readTarget(ar.f), ar && !ar.dismissedAt ? ar.w : 0); }
     zoomed = view.z > 1.05;
@@ -410,7 +418,7 @@ function tick(now){
     if (flashOn){ scheduler(); drawFlashes(); }
     updateAudio(clock, t);
     ctx.restore();
-    if (showTC){ const k = Math.max(0, frameIdx(t)); statusEl.textContent = `${fmt(t)} / ${fmt(LOOP)} · ${M.frames[k].name} ${fmt(t - (OFF + k * STEP))}${speed !== 1 ? ' · ' + speed + '×' : ''}${failed.length ? ' · missing: ' + failed.map(u => u.split('/').pop()).join(', ') : ''}`; }
+    if (showTC){ const k = Math.max(0, frameIdx(t)); statusEl.textContent = `${fmt(t)} / ${fmt(LOOP)} · ${M.frames[k].name} ${fmt(t - (OFF + k * STEP))}${speed !== 1 ? ' · ' + speed + '×' : ''}${' · ' + Math.round(fps) + ' fps · ' + W + '×' + H + ' · ' + loaded + '/' + total}${failed.length ? ' · missing: ' + failed.map(u => u.split('/').pop()).join(', ') : ''}`; }
   }
   film(paused ? 0 : dt);
   requestAnimationFrame(tick);
@@ -454,7 +462,7 @@ cv.addEventListener('pointerdown', e => { if (!entered){ if (started) enter(); r
   // zoomed in on the words: any click steps back
   if (zoomed || reading){ stepBack(); return; }
   const f = inkUnder(e.clientX, e.clientY);
-  if (f){ reading = { f, w:0 }; return; }
+  if (f){ reading = { f, w:0, startedAt:clock }; return; }
   // anywhere else: bring the words up now, or if they're already here, move on to the next frame
   const t = clock % LOOP, k = frameIdx(t);
   if (k < 0){ clock = nextFrameStart(); return; }

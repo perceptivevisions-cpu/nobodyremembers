@@ -429,7 +429,8 @@ function tick(now){
 let loaded = 0, total = 1, failed = [];
 function loadImg(url, keep){ return new Promise(res => { let tries = 0;
   const go = () => { const im = new Image(); im.decoding = 'async';
-    im.onload = () => { (im.decode ? im.decode().catch(() => {}) : Promise.resolve()).then(() => { keep(im); loaded++; res(); }); };
+    im.onload = () => { const dec = im.decode ? im.decode().catch(() => {}) : Promise.resolve();   // Safari's decode() can hang: never wait on it more than 1.5 s
+      Promise.race([dec, new Promise(r => setTimeout(r, 1500))]).then(() => { keep(im); loaded++; res(); }); };
     im.onerror = () => { if (++tries < 3) setTimeout(go, 600 * tries); else { failed.push(url); loaded++; res(); } };
     im.src = url + (tries ? '?r=' + tries : ''); };
   go(); }); }
@@ -458,9 +459,11 @@ function stepBack(){ const ar = autoRead(clock % LOOP);
   if (reading){ outFrom = { f:reading.f, w:reading.w }; reading = null; }
   else if (ar && ar.w > 0){ outFrom = { f:ar.f, w:ar.w }; }
   if (ar) dismissed.add(ar.visit); }
+function advanceFromWords(){ const ar = autoRead(clock % LOOP); if (ar) dismissed.add(ar.visit);
+  reading = null; outFrom = null; view = { z:1, x:M.w / 2, y:M.h / 2 }; clock = nextFrameStart() + 1.5; }
 cv.addEventListener('pointerdown', e => { if (!entered){ if (started) enter(); return; } if (firstTouch()) return; if (!started) return;
-  // zoomed in on the words: any click steps back
-  if (zoomed || reading){ stepBack(); return; }
+  // zoomed in on the words: a click means carry on, to the next frame (only stepping back left people in the same long frame, which looked stalled)
+  if (zoomed || reading){ advanceFromWords(); return; }
   const f = inkUnder(e.clientX, e.clientY);
   if (f){ reading = { f, w:0, startedAt:clock }; return; }
   // anywhere else: bring the words up now, or if they're already here, move on to the next frame

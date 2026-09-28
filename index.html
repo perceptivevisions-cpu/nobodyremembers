@@ -1,0 +1,468 @@
+<meta charset="utf-8">
+<title>How much of this is yours?</title>
+<style>
+  [hidden] { display:none !important; }
+  :root { color-scheme:dark; --ink:#050705; --paper:#dfe3d2; --dim:#7d8a74; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--ink); color:var(--paper); overflow:hidden; font-family:Georgia, serif; }
+  canvas { position:fixed; inset:0; width:100%; height:100%; display:block; }
+  body.idle, body.idle canvas { cursor:none; }
+  #start { position:fixed; inset:0; z-index:3; display:grid; place-items:center; padding:16px; background:var(--ink); }
+  .card { display:grid; gap:1.2rem; max-width:32rem; }
+  .card h1 { font-weight:400; font-size:clamp(2.2rem,7vw,3.6rem); margin:0; }
+  .card p { margin:0; line-height:1.55; color:var(--dim); }
+  .keys { font:12px/1.7 ui-monospace, Menlo, monospace; letter-spacing:.06em; color:var(--dim); }
+  button { justify-self:start; font:13px ui-monospace, Menlo, monospace; letter-spacing:.2em; text-transform:uppercase;
+    background:var(--paper); color:var(--ink); border:0; padding:.9rem 1.4rem; cursor:pointer; }
+  button:focus-visible { outline:2px solid var(--paper); outline-offset:4px; }
+  #status { position:fixed; left:16px; bottom:calc(14px + env(safe-area-inset-bottom,0px)); z-index:2;
+    font:12px ui-monospace, Menlo, monospace; color:var(--paper); background:rgba(0,0,0,.6); padding:.35rem .6rem; }
+</style>
+
+<canvas id="c"></canvas>
+<div id="start">
+  <div class="card">
+    <h1>nobody remembers. dad does.</h1>
+    <p>Four frames, about five minutes, looping. Each begins as one moment; others bleed in until you notice it was never one photograph. Between them, fragments of other moments flash past. Some come back and become the next frame. Some just flutter away. Test sound: wind, rain, a low tone and the room, each rising and falling on its own.</p>
+    <button id="go">Begin</button>
+    <div class="keys">Click the writing to read it · click again to step back · click anywhere else to bring up the words, then to move on · F fullscreen · Space pause · N next frame · ← → 10 s · [ ] speed · Z flash now · X flashes on/off · S sound · − + volume · G grain · I timecode</div>
+  </div>
+</div>
+<div id="status" hidden></div>
+
+<script>
+const BASE = 'assets/';
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let W = 0, H = 0, fit = { x:0, y:0, s:1 }, M = null; const imgs = {};
+const R = (a, b) => a + Math.random() * (b - a);
+const ease = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x);
+const develop = x => x <= 0 ? 0 : x >= 1 ? 1 : ease(Math.pow(x, 1.8));   // slow to start, like a print in the tray
+
+function resize(){ const d = Math.min(2, devicePixelRatio || 1); W = innerWidth * d; H = innerHeight * d; cv.width = W; cv.height = H;
+  if (M){ const s = Math.min(W / M.w, H / M.h); fit = { s, x:(W - M.w * s) / 2, y:(H - M.h * s) / 2 }; } }
+addEventListener('resize', resize);
+
+// ---------------- the score ----------------
+// per frame: [layer, in, fadeIn, out, fadeOut] in seconds from the frame's start
+const STEP = 78, OFF = 8;   // OFF: the title, before the first frame
+function frameIdx(t){ return t < OFF ? -1 : Math.min(M.frames.length - 1, Math.floor((t - OFF) / STEP)); }
+function nextFrameStart(){ const base = Math.floor(clock / LOOP) * LOOP, t = clock - base, k = frameIdx(t);
+  if (k < 0) return base + OFF - .5;
+  if (k >= M.frames.length - 1) return base + LOOP;
+  return base + OFF + (k + 1) * STEP - 1.5; }   // next frame begins while the last words are still fading
+const SCORES = {
+  bedroom: [ ['base', 0, 7, 64, 9], ['wide', 6, 10, 58, 8], ['ink', 7, 8, 70, 12] ],
+  fjord:   [ ['base', 0, 6, 62, 8], ['mid', 6, 9, 56, 7], ['right', 13, 9, 52, 7], ['ink', 11, 8, 72, 11] ],
+  skywater:[ ['base', 0, 7, 60, 9], ['water', 7, 10, 64, 8], ['ink', 11, 8, 72, 11] ],
+  barn:    [ ['base', 0, 6, 56, 8], ['right', 6, 9, 62, 8], ['ink', 11, 8, 72, 11] ],
+  forest:  [ ['base', 0, 7, 62, 9], ['echo', 0, 7, 62, 9], ['ink', 11, 8, 72, 11] ],
+  cloud:   [ ['base', 0, 8, 60, 9], ['mid', 6, 10, 58, 8], ['right', 13, 12, 56, 10], ['ink', 11, 8, 72, 11] ],
+  lake:    [ ['base', 0, 7, 64, 9], ['him', 1, 9, 60, 8], ['ink', 11, 8, 72, 11] ],
+};
+const BREATHE = { forest:'echo', cloud:'mid', bedroom:'wide', fjord:'mid', skywater:'water', barn:'right' };   // which moment breathes between its bracket exposures
+let LOOP = 0;
+
+function opacity(line, t){
+  const [k, s, fi, e, fo] = line;
+  if (t < s || t > e + fo) return 0;
+  if (t < s + fi) return (k === 'ink' ? develop : ease)((t - s) / fi);
+  if (t > e) return 1 - ease((t - e) / fo);
+  return 1;
+}
+function breath(t){   // rest, drift across, rest, drift back — never quite regular
+  const P = 14, ph = ((t + 3) % P) / P;
+  const v = ph < .3 ? 0 : ph < .5 ? ease((ph - .3) / .2) : ph < .72 ? 1 : 1 - ease((ph - .72) / .28);
+  return v * (.8 + .2 * Math.sin(t * .31));
+}
+const WC = new Map();
+function wcField(key, w, h){
+  // a soft, uneven field: where the paper takes the pigment first
+  if (WC.has(key)) return WC.get(key);
+  const fw = 160, fh = Math.max(20, Math.round(160 * h / w)), f = new Float32Array(fw * fh);
+  const oct = [[4, .5], [9, .3], [22, .2]];
+  for (const [g, amp] of oct){ const gw = g + 1, gh = Math.max(2, Math.round(g * fh / fw)) + 1, grid = new Float32Array(gw * gh).map(() => Math.random());
+    for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++){ const gx = x / fw * (gw - 1), gy = y / fh * (gh - 1), x0 = gx | 0, y0 = gy | 0, tx = gx - x0, ty = gy - y0;
+      const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty), i = y0 * gw + x0;
+      f[y * fw + x] += amp * ((grid[i] * (1 - sx) + grid[i + 1] * sx) * (1 - sy) + (grid[i + gw] * (1 - sx) + grid[i + gw + 1] * sx) * sy); } }
+  const m = document.createElement('canvas'); m.width = fw; m.height = fh;
+  const o = { f, fw, fh, m, mx:m.getContext('2d'), id:m.getContext('2d').createImageData(fw, fh), tmp:document.createElement('canvas') };
+  WC.set(key, o); return o;
+}
+function drawWC(key, src, dx, dy, dw, dh, p, alpha = 1){
+  if (p <= .003) return;
+  if (p >= .997){ ctx.globalAlpha = alpha; ctx.drawImage(src, dx, dy, dw, dh); return; }
+  const o = wcField(key, src.width, src.height), d = o.id.data, soft = .28, lift = p * (1 + soft) - soft;
+  for (let i = 0; i < o.f.length; i++){ const v = (lift - o.f[i] + soft) / soft; d[i * 4 + 3] = v <= 0 ? 0 : v >= 1 ? 255 : v * v * (3 - 2 * v) * 255; }
+  o.mx.putImageData(o.id, 0, 0);
+  const t = o.tmp, tw = Math.min(src.width, 1600), th = Math.round(tw * src.height / src.width);
+  if (t.width !== tw || t.height !== th){ t.width = tw; t.height = th; }
+  const tx = t.getContext('2d'); tx.globalCompositeOperation = 'source-over'; tx.clearRect(0, 0, tw, th); tx.drawImage(src, 0, 0, tw, th);
+  tx.globalCompositeOperation = 'destination-in'; tx.imageSmoothingEnabled = true; tx.drawImage(o.m, 0, 0, tw, th);
+  ctx.globalAlpha = alpha; ctx.drawImage(t, dx, dy, dw, dh);
+}
+let view = { z:1, x:960, y:540 }, reading = null, dismissed = new Set(), outFrom = null;
+function draw(spec, a, wc){
+  if (a <= .002 || !spec) return; const im = imgs[spec.src]; if (!im) return;
+  const x = fit.x + ((spec.pos[0] - view.x) * view.z + M.w / 2) * fit.s, y = fit.y + ((spec.pos[1] - view.y) * view.z + M.h / 2) * fit.s,
+        w = im.width * spec.scale * view.z * fit.s, h = im.height * spec.scale * view.z * fit.s;
+  if (wc) return drawWC(spec.src, im, x, y, w, h, a);
+  ctx.globalAlpha = a; ctx.drawImage(im, x, y, w, h);
+}
+// ---------------- reading: leaning in on the writing ----------------
+function inkBox(f){ const L = f.layers.ink, im = L && imgs[L.src]; if (!im) return null;
+  const w = im.width * L.scale, h = im.height * L.scale; return { x:L.pos[0], y:L.pos[1], w, h, cx:L.pos[0] + w / 2, cy:L.pos[1] + h / 2 }; }
+function readTarget(f){ const b = inkBox(f); if (!b) return null;
+  const z = Math.max(1.5, Math.min(3.2, M.w * .7 / b.w, M.h * .55 / b.h));
+  const hw = M.w / 2 / z, hh = M.h / 2 / z;
+  return { z, x:Math.min(M.w - hw, Math.max(hw, b.cx)), y:Math.min(M.h - hh, Math.max(hh, b.cy)) }; }
+const HOLD = { bedroom:14, fjord:10, skywater:10, barn:9, forest:12, cloud:12, lake:10 };
+function autoRead(t){   // once in each frame, after the words have developed, it leans in and waits for you
+  for (let k = 0; k < M.frames.length; k++){ const f = M.frames[k]; let lt = t - (OFF + k * STEP); if (lt < -LOOP / 2) lt += LOOP; if (lt > LOOP / 2) lt -= LOOP;
+    const ink = SCORES[f.name].find(l => l[0] === 'ink'); if (!ink) continue;
+    const s = ink[1] + ink[2] + 1.5, hold = HOLD[f.name] || 10, u = lt - s;
+    if (u < 0 || u > hold + 7) continue;
+    const visit = k + ':' + Math.floor((clock - (OFF + k * STEP)) / LOOP);
+    if (dismissed.has(visit)) return { f, w:0, visit, dismissedAt:true };
+    const w = u < 3.5 ? ease(u / 3.5) : u < 3.5 + hold ? 1 : 1 - ease((u - 3.5 - hold) / 3.5);
+    return { f, w, visit }; }
+  return null;
+}
+function applyView(target, w){
+  if (!target || w <= 0){ view = { z:1, x:M.w / 2, y:M.h / 2 }; return; }
+  view = { z:Math.exp(Math.log(target.z) * w), x:M.w / 2 + (target.x - M.w / 2) * w, y:M.h / 2 + (target.y - M.h / 2) * w }; }
+function toDesign(sx, sy){ const d = Math.min(2, devicePixelRatio || 1);
+  return { x:view.x + ((sx * d - fit.x) / fit.s - M.w / 2) / view.z, y:view.y + ((sy * d - fit.y) / fit.s - M.h / 2) / view.z }; }
+function inkUnder(sx, sy){ if (!M) return null; const t = clock % LOOP, p = toDesign(sx, sy);
+  for (let k = 0; k < M.frames.length; k++){ const f = M.frames[k]; let lt = t - (OFF + k * STEP); if (lt < -LOOP / 2) lt += LOOP; if (lt > LOOP / 2) lt -= LOOP;
+    const ink = SCORES[f.name].find(l => l[0] === 'ink'); if (!ink || opacity(ink, lt) < .25) continue;
+    const b = inkBox(f); if (b && p.x > b.x - 30 && p.x < b.x + b.w + 30 && p.y > b.y - 30 && p.y < b.y + b.h + 30) return f; }
+  return null; }
+function drawnLoupe(){ const c = document.createElement('canvas'); c.width = c.height = 48; const g = c.getContext('2d'); let s = 7; const r = () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const wob = () => (r() - .5) * 1.4;
+  const shape = () => { for (let a = 0; a <= 6.5; a += .35){ const rr = 11 + wob() * .6, x = 18 + Math.cos(a) * rr, y = 18 + Math.sin(a) * rr; a ? g.lineTo(x, y) : g.moveTo(x, y); }
+    g.moveTo(26 + wob(), 26 + wob()); g.lineTo(33 + wob(), 34 + wob()); g.lineTo(41 + wob(), 42 + wob()); };
+  [['rgba(0,0,0,.55)', 4.5], ['rgba(226,232,212,.9)', 1.8]].forEach(([col, lw]) => { g.strokeStyle = col; g.lineWidth = lw; g.lineCap = 'round'; for (let p = 0; p < 2; p++){ g.beginPath(); shape(); g.stroke(); } });
+  return `url(${c.toDataURL()}) 18 18, zoom-in`; }
+const LOUPE = drawnLoupe();
+// he doesn't fade in, he catches: a few stuttering exposures, a slip sideways, then he lands at about a third and stays, dropping out now and then
+// layers that never settle: a slow, uneven dissolve between lo and hi, living nearer hi, with a rare glitch
+// lake: he catches in with a few stutters, then drifts, mostly visible.  forest: the larger copy of itself dissolves ~60-80%.
+const GLITCH = { lake:{ layer:'him', lo:.36, hi:.66, arrive:true }, forest:{ layer:'echo', lo:.72, hi:1, arrive:false } };
+function hash(n){ n = Math.sin(n * 127.1 + 311.7) * 43758.5453; return n - Math.floor(n); }
+function driftL(t, seed){ const v = .5 + .22 * Math.sin(t * .41 + seed) + .17 * Math.sin(t * .23 + seed * 2.1) + .11 * Math.sin(t * .97 + seed * .7);
+  return 1 - Math.pow(1 - Math.max(0, Math.min(1, v)), 1.6); }
+function glitch(g, line, t, a){
+  const [, s, fi, e] = line; if (a <= 0) return [0, 0];
+  const level = g.lo + (g.hi - g.lo) * driftL(t, g.layer.length);
+  if (g.arrive && t < s + fi){ const u = (t - s) / fi;           // he comes and goes a few times as the picture loads, then stays
+    const swell = u < .28 ? Math.sin(u / .28 * Math.PI) * .55 : u < .56 ? Math.sin((u - .28) / .28 * Math.PI) * .8 : ease((u - .56) / .44);
+    const n = Math.floor(t * 11), catchy = hash(n) < .08 ? (hash(n + 3) - .5) * 10 : 0;   // an occasional catch
+    return [level * swell, catchy]; }
+  const n = Math.floor(t * 9), h = hash(n + 91 + g.lo * 50);
+  if (t > s + fi && t < e && h > .985) return [level * .35 * a, 0];               // drops back for a moment
+  if (t > s + fi && t < e && h < .012) return [Math.min(1, level * 1.35) * a, (hash(n) - .5) * 8];   // or slips sideways
+  return [level * a, 0];
+}
+function drawFrame(f, t){
+  const score = SCORES[f.name]; if (!score || t < 0) return;
+  for (const line of score){
+    const a = opacity(line, t); const G = GLITCH[f.name];
+    if (G && G.layer === line[0]){ const [ga, dx] = glitch(G, line, t, a), L = f.layers[line[0]]; draw(L && { ...L, pos:[L.pos[0] + dx, L.pos[1]] }, ga);
+      if (BREATHE[f.name] === line[0] && t > 24) draw(f.layers.breathe, ga * breath(t) * Math.min(1, (t - 24) / 6)); continue; }
+    draw(f.layers[line[0]], a, line[0] === 'ink' || line[0] === 'wash');
+    if (BREATHE[f.name] === line[0] && a > 0 && t > 24) draw(f.layers.breathe, a * breath(t) * Math.min(1, (t - 24) / 6));
+  }
+}
+
+
+// ---------------- flashes: fragments of other moments ----------------
+// Some flicker and flutter away. Some come back and become the next frame.
+const FRAGS = ["always the old road.", "we never asked why.", "the next valley?", "who remembers it differently?",
+  "do I only remember the photo?", "is this it?", "who is this", "nobody remembers. dad does.", "I can't hear what they're saying.",
+  "was I there.", "which of your memories is only a photograph?", "how much of this is yours?"];
+let FL = null; const fimgs = {}; let flashes = [], nextCluster = 8, becomeDone = new Set(), flashOn = true;
+function pick(a){ return a[Math.floor(Math.random() * a.length)]; }
+function coverRectD(im){ const s = Math.max(M.w / im.width, M.h / im.height); return [(M.w - im.width * s) / 2, (M.h - im.height * s) / 2, im.width * s, im.height * s]; }
+let TOOTH = null;
+function tooth(){   // paper tooth + blotches: the ink takes unevenly
+  if (TOOTH) return TOOTH;
+  const w = 480, h = 270, c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d');
+  const id = x.createImageData(w, h);
+  const blot = document.createElement('canvas'); blot.width = 24; blot.height = 14; const b = blot.getContext('2d'), bd = b.createImageData(24, 14);
+  for (let i = 0; i < bd.data.length; i += 4){ bd.data[i + 3] = 60 + Math.random() * 195; }
+  b.putImageData(bd, 0, 0);
+  for (let i = 0; i < id.data.length; i += 4){ id.data[i + 3] = 110 + Math.random() * 145; }
+  x.putImageData(id, 0, 0); x.globalCompositeOperation = 'destination-in'; x.imageSmoothingEnabled = true; x.drawImage(blot, 0, 0, w, h);
+  return TOOTH = c;
+}
+function handLine(g, text, x, y, size, font, alphaLo = .55){
+  // each letter its own size and height; the g drops below the line the way a hand writes it
+  let cx = x;
+  for (const w of text.split(' ')){
+    const wa = R(alphaLo, 1);
+    for (const ch of w){
+      const k = 1 + R(-.08, .08); g.font = `${size * k}px "${font}"`; g.globalAlpha = wa * R(.85, 1);
+      const dy = (ch === 'g' ? size * .3 : 0) + R(-.035, .035) * size;
+      g.fillText(ch, cx, y + dy); g.font = `${size}px "${font}"`; cx += g.measureText(ch).width;
+    }
+    g.font = `${size}px "${font}"`; cx += g.measureText(' ').width;
+  }
+  return cx - x;
+}
+function inkWords(text, size, x, y, font){
+  // small words soaked into the image: faded back, uneven, never crisp
+  const c = document.createElement('canvas'); c.width = 960; c.height = 540; const g = c.getContext('2d'); const k = 960 / 1920;
+  g.font = `${size * k * 2}px "${font}"`; g.fillStyle = '#dfe5d2'; g.textBaseline = 'alphabetic';
+  g.save(); g.scale(.5, .5); g.translate(x * k * 2, y * k * 2); g.rotate(R(-.012, .012));
+  handLine(g, text, 0, 0, size * k * 2, font);
+  g.restore();
+  g.globalCompositeOperation = 'destination-in'; g.globalAlpha = 1; g.drawImage(tooth(), 0, 0, 960, 540);
+  const out = document.createElement('canvas'); out.width = 960; out.height = 540; const o = out.getContext('2d');
+  if ('filter' in o) o.filter = 'blur(.45px)'; o.drawImage(c, 0, 0);
+  return out;
+}
+let TITLE = null;
+function titleCanvas(){
+  const c = document.createElement('canvas'); c.width = 1920; c.height = 1080; const g = c.getContext('2d');
+  g.fillStyle = '#e2e8d4'; g.textBaseline = 'alphabetic'; const text = 'nobody remembers. dad does.', size = 50;
+  g.font = `${size}px "JasonThin"`; const w = g.measureText(text).width;
+  handLine(g, text, (1920 - w) / 2, 560, size, 'JasonThin', .7);
+  g.globalCompositeOperation = 'destination-in'; g.globalAlpha = 1; g.drawImage(tooth(), 0, 0, 1920, 1080);
+  const out = document.createElement('canvas'); out.width = 1920; out.height = 1080; const o = out.getContext('2d');
+  if ('filter' in o) o.filter = 'blur(.6px)'; o.drawImage(c, 0, 0); return out;
+}
+function schedule(t0, ev){ ev.t0 = t0; flashes.push(ev); }
+let lastPuff = 0;
+function cluster(t){
+  const n = 1 + Math.floor(Math.random() * 4); let tt = t;
+  for (let i = 0; i < n; i++){
+    const r = Math.random(), dur = f => f / 24;
+    if (r < .3){                         // a glimpse of another moment, whole
+      const src = Math.random() < .6 && FL.people ? pick(FL.people) : pick(FL.singles); const im = fimgs[src]; const a = R(.35, .85) * ((FL.quiet || {})[src] || 1);
+      schedule(tt, { kind:'img', im, a, dur:dur(2 + Math.floor(Math.random() * 5)) });
+      if (Math.random() < .5) schedule(tt + R(.25, .5), { kind:'img', im, a:a * .45, dur:dur(2) });   // flutters, once more, fainter
+    } else if (r < .62){                 // a bracket run, stuttering
+      const seq = FL.seqs[pick(Object.keys(FL.seqs))]; const a = R(.4, .85);
+      let t2 = tt; for (const f of seq.slice(0, 3 + Math.floor(Math.random() * 4))){ const im = fimgs[f];
+        schedule(t2, { kind:'img', im, a, dur:dur(2) }); t2 += dur(2 + Math.floor(Math.random() * 2)); }
+    } else {                             // words, at a scale they never have in the frames
+      const text = pick(FRAGS), size = R(20, 34);
+      schedule(tt, { kind:'canvas', c:inkWords(text, size, R(90, 1500), R(120, 1000), Math.random() < .6 ? 'JasonThin' : 'JasonLight'),
+        a:R(.5, .85), dur:R(1.6, 3.2), fade:.8 });
+    }
+    tt += R(.15, 1.1);
+  }
+}
+function scheduler(){
+  const t = clock;
+  if (t > nextCluster){ if (t % LOOP > OFF + 30) cluster(t); nextCluster = t + R(9, 26); }   // after the title, the first frame is left alone for a while
+  // the next frame arrives in glimpses before it becomes
+  const start = nextFrameStart() + 1.5, idx = Math.round(start * 10);
+  if (start - t < 7 && !becomeDone.has(idx) && frameIdx((start + .01) % LOOP) >= 0){ becomeDone.add(idx);
+    const nk = frameIdx((start + .01) % LOOP), f = M.frames[Math.max(0, nk)], im = imgs[f.layers.base.src];
+    (nk === 0 ? [[-1.4, .16, 4]] : [[-6.2, .22, 2], [-4.1, .3, 3], [-2.4, .45, 3], [-1.1, .5, 5]]).forEach(([dt, a, n]) => schedule(start + dt, { kind:'img', im, a, dur:n / 24 })); }
+  flashes = flashes.filter(e => t < e.t0 + e.dur + .5);
+}
+function drawFlashes(){
+  const t = clock;
+  for (const e of flashes){
+    if (t < e.t0 || t > e.t0 + e.dur) continue;
+    if (!e.heard && e.kind === 'img'){ e.heard = true; if (clock - lastPuff > .5){ lastPuff = clock; puff(e.a); } }
+    const u = t - e.t0, f = e.fade ? Math.min(1, u / e.fade, (e.dur - u) / e.fade) : 1, a = e.a * Math.max(0, f);
+    ctx.globalAlpha = a;
+    if (e.kind === 'img'){ const [x, y, w, h] = coverRectD(e.im); ctx.drawImage(e.im, fit.x + x * fit.s, fit.y + y * fit.s, w * fit.s, h * fit.s); }
+    else if (e.kind === 'canvas'){ ctx.save(); ctx.globalCompositeOperation = 'screen'; drawWC(e.c, e.c, fit.x, fit.y, M.w * fit.s, M.h * fit.s, Math.max(0, Math.min(1, f)), e.a); ctx.restore(); }
+    else if (e.kind === 'word'){ ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.fillStyle = '#d9e0cc';
+      if ('filter' in ctx) ctx.filter = `blur(${(.7 * fit.s).toFixed(2)}px)`;
+      ctx.translate(fit.x + e.x * fit.s, fit.y + e.y * fit.s); ctx.rotate(e.rot); ctx.font = `${e.size * fit.s}px "${e.font}"`; ctx.fillText(e.text, 0, 0); ctx.restore(); }
+  }
+  ctx.globalAlpha = 1;
+}
+
+
+// ---------------- test sound: wind, rain, a low tone, the room ----------------
+// Each layer rises and falls on its own slow, uneven breath, and leans toward the frame it belongs to.
+let AC = null, master = null, AUD = {}, soundOn = true, vol = .8;
+function noiseBuf(kind, secs){
+  const sr = AC.sampleRate, b = AC.createBuffer(2, sr * secs, sr);
+  for (let ch = 0; ch < 2; ch++){ const d = b.getChannelData(ch); let l = 0, p0 = 0, p1 = 0, p2 = 0;
+    for (let i = 0; i < d.length; i++){ const w = Math.random() * 2 - 1;
+      if (kind === 'brown'){ l = (l + .02 * w) / 1.02; d[i] = l * 3.2; }
+      else if (kind === 'pink'){ p0 = .997 * p0 + w * .029; p1 = .985 * p1 + w * .032; p2 = .95 * p2 + w * .048; d[i] = (p0 + p1 + p2 + w * .02) * .9; }
+      else d[i] = w; } }
+  return b;
+}
+function loopSrc(buf){ const s = AC.createBufferSource(); s.buffer = buf; s.loop = true; s.loopStart = Math.random(); s.start(0, Math.random() * 3); return s; }
+function startAudio(){
+  if (AC) return;
+  try {
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    master = AC.createGain(); master.gain.value = 0; master.connect(AC.destination);
+    const comp = AC.createDynamicsCompressor(); comp.threshold.value = -18; comp.ratio.value = 3; comp.connect(master);
+    const layer = (name) => { const g = AC.createGain(); g.gain.value = 0; g.connect(comp); AUD[name] = g; return g; };
+    // wind: brown noise through a band that wanders
+    const wind = loopSrc(noiseBuf('brown', 8)); const wf = AC.createBiquadFilter(); wf.type = 'bandpass'; wf.frequency.value = 320; wf.Q.value = .8;
+    wind.connect(wf); wf.connect(layer('wind')); AUD.windF = wf;
+    // rain: pink noise, hissing high, plus scattered drops on glass
+    const rain = loopSrc(noiseBuf('pink', 6)); const rf = AC.createBiquadFilter(); rf.type = 'highpass'; rf.frequency.value = 1400;
+    const rl = AC.createBiquadFilter(); rl.type = 'lowpass'; rl.frequency.value = 7000; rain.connect(rf); rf.connect(rl); rl.connect(layer('rain'));
+    const sr = AC.sampleRate, db = AC.createBuffer(2, sr * 5, sr);
+    for (let ch = 0; ch < 2; ch++){ const d = db.getChannelData(ch);
+      for (let n = 0; n < 90; n++){ const s0 = Math.floor(Math.random() * (d.length - 2000)), a = Math.random() * .6 + .1, f = 2000 + Math.random() * 3000;
+        for (let k = 0; k < 900; k++) d[s0 + k] += Math.sin(k / sr * f * 6.283) * a * Math.exp(-k / 120); } }
+    const drops = AC.createBufferSource(); drops.buffer = db; drops.loop = true; drops.start();
+    const dg = AC.createGain(); dg.gain.value = .35; drops.connect(dg); dg.connect(AUD.rain);
+    // tone: a low open fifth, slightly detuned, breathing
+    const tg = layer('tone'); const tl = AC.createBiquadFilter(); tl.type = 'lowpass'; tl.frequency.value = 600; tl.connect(tg);
+    [[55, .5], [55.35, .4], [82.4, .28], [110.2, .12], [164.8, .05]].forEach(([f, a]) => { const o = AC.createOscillator(); o.type = 'triangle'; o.frequency.value = f;
+      const g = AC.createGain(); g.gain.value = a * .22; o.connect(g); g.connect(tl); o.start(); });
+    // the room: very low, very quiet
+    const room = loopSrc(noiseBuf('brown', 6)); const rmf = AC.createBiquadFilter(); rmf.type = 'lowpass'; rmf.frequency.value = 180; room.connect(rmf); rmf.connect(layer('room'));
+    // a breath of air for flashes
+    AUD.puffBuf = noiseBuf('pink', 1);
+    master.gain.setTargetAtTime(vol, AC.currentTime, 3);
+  } catch(e){ AC = null; }
+}
+// how much each frame leans on each layer
+const MIX = { forest:{ wind:.5, rain:.08, tone:.4, room:.3 }, cloud:{ wind:.7, rain:.25, tone:.7, room:.2 }, lake:{ wind:.6, rain:.2, tone:.45, room:.25 }, bedroom:{ wind:.15, rain:.55, tone:.35, room:.9 }, fjord:{ wind:.85, rain:.1, tone:.6, room:.3 },
+              skywater:{ wind:.5, rain:.9, tone:.4, room:.25 }, barn:{ wind:.6, rain:.35, tone:.5, room:.4 } };
+const drift = (t, a, b, c) => .5 + .5 * (Math.sin(t / a) * .5 + Math.sin(t / b + 1.7) * .3 + Math.sin(t / c + 4.1) * .2);   // slow, uneven
+let audT = 0;
+function updateAudio(t, loopT){
+  if (!AC || AC.state !== 'running' || clock - audT < .15) return; audT = clock;
+  const n = M.frames.length; const w = { wind:0, rain:0, tone:0, room:0 };
+  for (let k = 0; k < n; k++){ let lt = loopT - (OFF + k * STEP); if (lt < -LOOP / 2) lt += LOOP; if (lt > LOOP / 2) lt -= LOOP;
+    const pres = lt < -4 || lt > STEP + 8 ? 0 : Math.min(1, (lt + 4) / 10, (STEP + 8 - lt) / 12);
+    const m = MIX[M.frames[k].name]; for (const key in w) w[key] = Math.max(w[key], m[key] * Math.max(0, pres)); }
+  const now = AC.currentTime;
+  const set = (g, v) => g.gain.setTargetAtTime(v, now, 1.8);
+  set(AUD.wind, w.wind * (.25 + .75 * drift(t, 7.3, 13.1, 29)) * .55);
+  set(AUD.rain, w.rain * (.2 + .8 * drift(t + 40, 11.7, 5.9, 23)) * .5);
+  set(AUD.tone, w.tone * (.3 + .7 * drift(t + 90, 17, 31, 9.1)) * .6);
+  set(AUD.room, w.room * .35);
+  AUD.windF.frequency.setTargetAtTime(220 + 380 * drift(t + 12, 4.1, 9.3, 17), now, 1.2);
+}
+function puff(a){   // a breath of air under a flash
+  if (!AC || !soundOn) return;
+  const s = AC.createBufferSource(); s.buffer = AUD.puffBuf; const f = AC.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = R(500, 1600); f.Q.value = .7;
+  const g = AC.createGain(); const now = AC.currentTime; g.gain.setValueAtTime(0, now); g.gain.linearRampToValueAtTime(a * .25, now + .05); g.gain.exponentialRampToValueAtTime(.0001, now + R(.4, .9));
+  s.connect(f); f.connect(g); g.connect(master); s.start(); s.stop(now + 1);
+}
+function setSound(on){ soundOn = on; if (!AC){ if (on) startAudio(); return; } if (AC.state === 'suspended') AC.resume();
+  master.gain.setTargetAtTime(on ? vol : 0, AC.currentTime, .8); }
+
+// ---------------- film ----------------
+const GS = 384, grainFrames = [];
+(function(){
+  for (let k = 0; k < 8; k++){
+    const sm = document.createElement('canvas'); sm.width = sm.height = GS / 3; const sc = sm.getContext('2d'), sd = sc.createImageData(GS / 3, GS / 3);
+    for (let i = 0; i < sd.data.length; i += 4){ const v = 128 + (Math.random() + Math.random() - 1) * 120; sd.data[i] = sd.data[i+1] = sd.data[i+2] = v; sd.data[i+3] = 255; }
+    sc.putImageData(sd, 0, 0);
+    const c = document.createElement('canvas'); c.width = c.height = GS; const x = c.getContext('2d'); x.drawImage(sm, 0, 0, GS, GS);
+    const f = x.getImageData(0, 0, GS, GS), d = f.data;
+    for (let i = 0; i < d.length; i += 4){ const n = (Math.random() + Math.random() + Math.random() - 1.5) * 70; const v = Math.max(0, Math.min(255, 128 + (d[i] - 128) * .55 + n)); d[i] = d[i+1] = d[i+2] = v; }
+    x.putImageData(f, 0, 0); grainFrames.push(c);
+  }
+})();
+let filmT = 0, gi = 0, flick = 0, weave = { x:0, y:0 }, dust = [], grainOn = true;
+function film(dt){
+  filmT += dt;
+  if (filmT > 1 / 24){ filmT = 0; gi = (gi + 1 + Math.floor(Math.random() * 6)) % grainFrames.length;
+    weave.x = weave.x * .85 + R(-.45, .45); weave.y = weave.y * .85 + R(-.45, .45); flick = R(0, .03);
+    dust = Math.random() < .025 ? [{ x:Math.random() * W, y:Math.random() * H, r:R(1, 3) * fit.s * 1.4, l:Math.random() < .5, a:R(0, 6.28) }] : []; }
+  ctx.globalAlpha = 1;
+  const v = ctx.createRadialGradient(W/2, H/2, Math.min(W, H) * .38, W/2, H/2, Math.max(W, H) * .72);
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,.5)'); ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = `rgba(0,0,0,${flick})`; ctx.fillRect(0, 0, W, H);
+  if (grainOn){ ctx.save(); ctx.globalCompositeOperation = 'overlay'; ctx.globalAlpha = .2;
+    const pat = ctx.createPattern(grainFrames[gi], 'repeat'); pat.setTransform?.(new DOMMatrix().translate(R(0, GS), R(0, GS)).scale(Math.max(1, 1.4 * W / 1920)));
+    ctx.fillStyle = pat; ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = .075; ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'multiply'; ctx.globalAlpha = .1; ctx.fillRect(0, 0, W, H); ctx.restore(); }
+  for (const d of dust){ ctx.fillStyle = d.l ? 'rgba(235,235,220,.5)' : 'rgba(0,0,0,.55)'; ctx.beginPath(); ctx.ellipse(d.x, d.y, d.r, d.r * .7, d.a, 0, 6.28); ctx.fill(); }
+}
+
+// ---------------- loop ----------------
+let clock = 0, last = performance.now(), paused = false, started = false, showTC = false, speed = 1;
+const statusEl = document.getElementById('status');
+const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+function tick(now){
+  const dt = Math.min(.1, (now - last) / 1000); last = now;
+  if (started && !paused && !reading) clock += dt * speed;
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.fillStyle = '#050705'; ctx.fillRect(0, 0, W, H);
+  if (started && M){
+    const t = clock % LOOP, n = M.frames.length;
+    if (reading){ reading.w = Math.min(1, reading.w + dt / 1.8); applyView(readTarget(reading.f), ease(reading.w)); }
+    else if (outFrom){ outFrom.w -= dt / 1.2; if (outFrom.w <= 0) outFrom = null; else applyView(readTarget(outFrom.f), ease(outFrom.w)); }
+    else { const ar = autoRead(t); applyView(ar && !ar.dismissedAt && readTarget(ar.f), ar && !ar.dismissedAt ? ar.w : 0); }
+    zoomed = view.z > 1.05;
+    ctx.save(); ctx.translate(weave.x * fit.s, weave.y * fit.s);
+    // the previous frame's tail, then the current frame
+    for (let k = 0; k < n; k++){ let lt = t - (OFF + k * STEP); if (lt < -LOOP / 2) lt += LOOP; if (lt > LOOP / 2) lt -= LOOP;
+      if (lt > -1 && lt < STEP + 20) drawFrame(M.frames[k], lt); }
+    if (t < OFF + 1){ const ta = Math.min((t - .5) / 2.6, 1 - (t - (OFF - 3.2)) / 2.6);
+      if (ta > 0){ if (!TITLE) TITLE = titleCanvas(); ctx.save(); ctx.globalCompositeOperation = 'screen';
+        drawWC('title', TITLE, fit.x, fit.y, M.w * fit.s, M.h * fit.s, Math.min(1, ta), .92); ctx.restore(); } }
+    if (flashOn){ scheduler(); drawFlashes(); }
+    updateAudio(clock, t);
+    ctx.restore();
+    if (showTC){ const k = Math.max(0, frameIdx(t)); statusEl.textContent = `${fmt(t)} / ${fmt(LOOP)} · ${M.frames[k].name} ${fmt(t - (OFF + k * STEP))}${speed !== 1 ? ' · ' + speed + '×' : ''}`; }
+  }
+  film(paused ? 0 : dt);
+  requestAnimationFrame(tick);
+}
+
+async function boot(){
+  M = await (await fetch(BASE + 'manifest.json')).json(); LOOP = OFF + STEP * M.frames.length;
+  FL = await (await fetch(BASE + 'flash/flash.json')).json();
+  const fsrcs = [...FL.singles, ...(FL.people || []), ...Object.values(FL.seqs).flat()];
+  const fontLoads = [['JasonThin', 'Jason3-BrushThin.ttf'], ['JasonLight', 'Jason1-BrushLight.ttf']].map(([n, f]) =>
+    new FontFace(n, `url(${BASE}fonts/${f})`).load().then(ff => document.fonts.add(ff)).catch(() => {}));
+  await Promise.all([...fontLoads, ...fsrcs.map(s => new Promise(res => { const im = new Image(); im.onload = () => { fimgs[s] = im; res(); }; im.onerror = res; im.src = BASE + 'flash/' + s; }))]);
+  const srcs = new Set(); for (const f of M.frames) for (const v of Object.values(f.layers)) srcs.add(v.src);
+  await Promise.all([...srcs].map(s => new Promise(res => { const im = new Image(); im.onload = () => { imgs[s] = im; res(); }; im.onerror = res; im.src = BASE + s; })));
+  resize();
+}
+const ready = boot();
+let idleT; function wake(){ document.body.classList.remove('idle'); clearTimeout(idleT); idleT = setTimeout(() => document.body.classList.add('idle'), 2500); }
+addEventListener('mousemove', e => { wake(); if (started) cv.style.cursor = (reading || zoomed) ? 'zoom-out' : inkUnder(e.clientX, e.clientY) ? LOUPE : 'pointer'; });
+let zoomed = false;
+function stepBack(){ const ar = autoRead(clock % LOOP);
+  if (reading){ outFrom = { f:reading.f, w:reading.w }; reading = null; }
+  else if (ar && ar.w > 0){ outFrom = { f:ar.f, w:ar.w }; }
+  if (ar) dismissed.add(ar.visit); }
+cv.addEventListener('pointerdown', e => { if (!started) return;
+  // zoomed in on the words: any click steps back
+  if (zoomed || reading){ stepBack(); return; }
+  const f = inkUnder(e.clientX, e.clientY);
+  if (f){ reading = { f, w:0 }; return; }
+  // anywhere else: bring the words up now, or if they're already here, move on to the next frame
+  const t = clock % LOOP, k = frameIdx(t);
+  if (k < 0){ clock = nextFrameStart(); return; }
+  const lt = t - (OFF + k * STEP), ink = SCORES[M.frames[k].name].find(l => l[0] === 'ink'), ready = ink[1] + ink[2];
+  if (lt < ready) clock += ready - lt;
+  else clock = nextFrameStart(); });
+document.getElementById('go').onclick = async () => {
+  document.getElementById('start').hidden = true; startAudio(); await ready; started = true; wake();
+  try { document.documentElement.requestFullscreen?.().catch(() => {}); } catch(e){}
+  try { navigator.wakeLock?.request('screen').catch(() => {}); } catch(e){}
+};
+addEventListener('keydown', e => { const k = e.key.toLowerCase(); wake();
+  if (k === 'f'){ if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.().catch(() => {}); }
+  else if (k === ' '){ e.preventDefault(); paused = !paused; }
+  else if (k === 'escape'){ stepBack(); }
+  else if (k === 'n'){ clock = nextFrameStart(); }
+  else if (k === 'arrowright') clock += 10;
+  else if (k === 'z'){ cluster(clock); }
+  else if (k === 'arrowleft') clock = Math.max(0, clock - 10);
+  else if (k === ']') speed = Math.min(8, speed * 2);
+  else if (k === '[') speed = Math.max(1, speed / 2);
+  else if (k === 'g') grainOn = !grainOn;
+  else if (k === 'x'){ flashOn = !flashOn; }
+  else if (k === 's'){ setSound(!soundOn); }
+  else if (k === '-'){ vol = Math.max(0, vol - .1); if (AC && soundOn) master.gain.setTargetAtTime(vol, AC.currentTime, .3); }
+  else if (k === '=' || k === '+'){ vol = Math.min(1.5, vol + .1); if (AC && soundOn) master.gain.setTargetAtTime(vol, AC.currentTime, .3); }
+  else if (k === 'i'){ showTC = !showTC; statusEl.hidden = !showTC; }
+});
+requestAnimationFrame(tick);
+</script>

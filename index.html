@@ -6,6 +6,7 @@
   html, body { height:100%; }
   body { margin:0; background:var(--ink); color:var(--paper); overflow:hidden; font-family:Georgia, serif; }
   canvas { position:fixed; inset:0; width:100%; height:100%; display:block; }
+  @media (pointer:fine) { html, body, canvas { cursor:none !important; } }   /* the + and > are the cursor */
   body.idle, body.idle canvas { cursor:none; }
   .card { display:grid; gap:1.2rem; max-width:32rem; }
   .card h1 { font-weight:400; font-size:clamp(2.2rem,7vw,3.6rem); margin:0; }
@@ -23,12 +24,28 @@
   #loadline { position:fixed; left:50%; top:calc(50% + clamp(52px, 8vh, 92px)); width:clamp(80px, 10vw, 160px); height:1px; z-index:2;
     transform:translateX(-50%); background:linear-gradient(90deg, rgba(223,227,210,.35) calc(var(--p, 0) * 100%), transparent 0); transition:opacity 1.2s; }
   #loadline.done { opacity:0; }
+  #phone { position:fixed; left:16px; right:16px; bottom:calc(22px + env(safe-area-inset-bottom,0px)); z-index:3; text-align:center; pointer-events:none;
+    font:clamp(17px, 4.6vw, 22px)/1.45 'JasonThinCSS', Georgia, serif; color:var(--paper); opacity:0; transition:opacity 2.4s ease; }
+  #phone.on { opacity:.9; animation:breath 3.4s ease-in-out infinite; }
+  #phone span { color:rgba(223,227,210,.55); } #phone b { font-weight:inherit; color:var(--paper); }
+  #phone small { display:block; font-size:.8em; opacity:.7; margin-top:.5em; }
+  @keyframes breath { 0%,100% { text-shadow:0 0 4px rgba(226,232,212,.15); } 50% { text-shadow:0 0 12px rgba(226,232,212,.55); } }
+  @media (orientation:landscape) { #phone { font-size:clamp(15px, 2.1vw, 19px); } }   /* smaller than the title, which is larger here */
+  @media (orientation:portrait) { #phone { bottom:auto; top:calc(50% + 32vw); } }
+  @media (prefers-reduced-motion: reduce) { #phone.on { animation:none; } }
+  #cue { position:fixed; left:0; top:0; z-index:4; pointer-events:none; white-space:nowrap; font:34px/1 'JasonThinCSS', Georgia, serif; color:#dfe3d2;
+    opacity:0; transition:opacity .6s ease; animation:breath 3.4s ease-in-out infinite; will-change:transform; }
+  #cue.on { opacity:.9; }
+  #cue { text-shadow:0 0 3px rgba(0,0,0,.8), 0 0 8px rgba(226,232,212,.35); }
+  @media (pointer:coarse) { #cue { display:none; } }
   #enter.on { opacity:.55; }
   #enter:hover, #enter:focus-visible { opacity:1; outline:none; }
 </style>
 
 <canvas id="c"></canvas>
 <div id="loadline"></div>
+<div id="cue"></div>
+<div id="phone"><span><b>touch</b> the <b>words</b> and they come closer. <b>touch</b> the <b>picture</b> to let it go.</span><small id="phonenote"></small></div>
 <button id="enter" hidden>enter</button>
 <div id="status" hidden></div>
 
@@ -142,7 +159,7 @@ function toDesign(sx, sy){ const d = W / innerWidth;
 function inkUnder(sx, sy){ if (!M) return null; const t = clock % LOOP, p = toDesign(sx, sy);
   for (let k = 0; k < M.frames.length; k++){ const f = M.frames[k]; let lt = t - (OFF + k * STEP); if (lt < -LOOP / 2) lt += LOOP; if (lt > LOOP / 2) lt -= LOOP;
     const ink = SCORES[f.name].find(l => l[0] === 'ink'); if (!ink || opacity(ink, lt) < .25) continue;
-    const b = inkBox(f); if (b && p.x > b.x - 30 && p.x < b.x + b.w + 30 && p.y > b.y - 30 && p.y < b.y + b.h + 30) return f; }
+    const b = inkBox(f); if (b && p.x > b.x - 50 && p.x < b.x + b.w + 50 && p.y > b.y - 45 && p.y < b.y + b.h + 45) return f; }
   return null; }
 function drawnLoupe(){ const c = document.createElement('canvas'); c.width = c.height = 48; const g = c.getContext('2d'); let s = 7; const r = () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
   const wob = () => (r() - .5) * 1.4;
@@ -151,6 +168,12 @@ function drawnLoupe(){ const c = document.createElement('canvas'); c.width = c.h
   [['rgba(0,0,0,.55)', 4.5], ['rgba(226,232,212,.9)', 1.8]].forEach(([col, lw]) => { g.strokeStyle = col; g.lineWidth = lw; g.lineCap = 'round'; for (let p = 0; p < 2; p++){ g.beginPath(); shape(); g.stroke(); } });
   return `url(${c.toDataURL()}) 18 18, zoom-in`; }
 const LOUPE = drawnLoupe();
+function drawnRing(){   // one plain cursor everywhere: a small hand-drawn ring; the word beside it says what a touch does
+  const c = document.createElement('canvas'); c.width = c.height = 32; const g = c.getContext('2d'); let s = 11; const r = () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const ring = () => { g.beginPath(); for (let a = 0; a <= 6.6; a += .3){ const rr = 7 + (r() - .5) * .9, x = 16 + Math.cos(a) * rr, y = 16 + Math.sin(a) * rr; a ? g.lineTo(x, y) : g.moveTo(x, y); } g.stroke(); };
+  g.lineCap = 'round'; g.strokeStyle = 'rgba(0,0,0,.55)'; g.lineWidth = 3.4; ring(); g.strokeStyle = 'rgba(226,232,212,.92)'; g.lineWidth = 1.5; ring();
+  return `url(${c.toDataURL()}) 16 16, crosshair`; }
+const RING = drawnRing();
 // he doesn't fade in, he catches: a few stuttering exposures, a slip sideways, then he lands at about a third and stays, dropping out now and then
 // layers that never settle: a slow, uneven dissolve between lo and hi, living nearer hi, with a rare glitch
 // lake: he catches in with a few stutters, then drifts, mostly visible.  forest: the larger copy of itself dissolves ~60-80%.
@@ -176,12 +199,21 @@ function drawFrame(f, t){
     const a = opacity(line, t); const G = GLITCH[f.name];
     if (G && G.layer === line[0]){ const [ga, dx] = glitch(G, line, t, a), L = f.layers[line[0]]; draw(L && { ...L, pos:[L.pos[0] + dx, L.pos[1]] }, ga);
       if (BREATHE[f.name] === line[0] && t > 24) draw(f.layers.breathe, ga * breath(t) * Math.min(1, (t - 24) / 6)); continue; }
-    draw(f.layers[line[0]], a, line[0] === 'ink' || line[0] === 'wash');
+    if (line[0] === 'ink' && a >= .997 && !(reading && reading.f === f)){ glowLayer(f.layers.ink, t); draw(f.layers.ink, 1, true);
+      if (f === M.frames[0] && !usedRead && view.z < 1.05) drawHint(f, t); }
+    else draw(f.layers[line[0]], a, line[0] === 'ink' || line[0] === 'wash');
     if (BREATHE[f.name] === line[0] && a > 0 && t > 24) draw(f.layers.breathe, a * breath(t) * Math.min(1, (t - 24) / 6));
   }
 }
 
 
+function drawHint(f, t){   // once, in the first scene: a small (closer) beside the words, until someone touches them
+  const b = inkBox(f); if (!b) return;
+  if (!HINT) HINT = handCanvas('(come closer)', 28, Math.round(b.y + 26), -(b.x - 18));
+  const L = { src:'__hint', pos:[0, 0], scale:1 };
+  const x = fit.x + ((0 - view.x) * view.z + M.w / 2) * fit.s, y = fit.y + ((0 - view.y) * view.z + M.h / 2) * fit.s;
+  glowAt('hint', HINT.c, x, y, M.w * view.z * fit.s, M.h * view.z * fit.s, t + 1.1); ctx.globalAlpha = .85; ctx.drawImage(HINT.c, x, y, M.w * view.z * fit.s, M.h * view.z * fit.s); ctx.globalAlpha = 1;
+}
 // ---------------- flashes: fragments of other moments ----------------
 // Some flicker and flutter away. Some come back and become the next frame.
 const FRAGS = ["always the old road.", "we never asked why.", "the next valley?", "who remembers it differently?",
@@ -202,15 +234,17 @@ function tooth(){   // paper tooth + blotches: the ink takes unevenly
   x.putImageData(id, 0, 0); x.globalCompositeOperation = 'destination-in'; x.imageSmoothingEnabled = true; x.drawImage(blot, 0, 0, w, h);
   return TOOTH = c;
 }
-function handLine(g, text, x, y, size, font, alphaLo = .55){
+function handLine(g, text, x, y, size, font, alphaLo = .55, emph = null, g2 = null){
   // each letter its own size and height; the g drops below the line the way a hand writes it
   let cx = x;
   for (const w of text.split(' ')){
-    const wa = R(alphaLo, 1);
+    const key = w.replace(/[^a-z]/gi, '').toLowerCase(), wa = emph ? (emph.has(key) ? R(.95, 1) : R(.38, .55)) : R(alphaLo, 1);
     for (const ch of w){
       const k = 1 + R(-.08, .08); g.font = `${size * k}px "${font}"`; g.globalAlpha = wa * R(.85, 1);
       const dy = (ch === 'g' ? size * .3 : 0) + R(-.035, .035) * size;
-      g.fillText(ch, cx, y + dy); g.font = `${size}px "${font}"`; cx += g.measureText(ch).width;
+      g.fillText(ch, cx, y + dy);
+      if (g2 && emph && emph.has(key)){ g2.font = g.font; g2.globalAlpha = 1; g2.fillText(ch, cx, y + dy); }   // the same letter again, for the words that carry the light
+      g.font = `${size}px "${font}"`; cx += g.measureText(ch).width;
     }
     g.font = `${size}px "${font}"`; cx += g.measureText(' ').width;
   }
@@ -231,13 +265,49 @@ function inkWords(text, size, x, y, font){
 let TITLE = null;
 function titleCanvas(){
   const c = document.createElement('canvas'); c.width = 1920; c.height = 1080; const g = c.getContext('2d');
-  g.fillStyle = '#e2e8d4'; g.textBaseline = 'alphabetic'; const text = 'nobody remembers. dad does.', size = 50;
+  g.fillStyle = '#e2e8d4'; g.textBaseline = 'alphabetic'; const text = 'nobody remembers. dad does.', size = 90;
   g.font = `${size}px "JasonThin"`; const w = g.measureText(text).width;
-  handLine(g, text, (1920 - w) / 2, 560, size, 'JasonThin', .7);
+  handLine(g, text, (1920 - w) / 2, 540, size, 'JasonThin', .7);
   g.globalCompositeOperation = 'destination-in'; g.globalAlpha = 1; g.drawImage(tooth(), 0, 0, 1920, 1080);
   const out = document.createElement('canvas'); out.width = 1920; out.height = 1080; const o = out.getContext('2d');
   if ('filter' in o) o.filter = 'blur(.6px)'; o.drawImage(c, 0, 0); return out;
 }
+// the glow: whatever can be touched breathes, slowly brightening inside a soft halo, the same everywhere.
+// The halo is a blurred copy made once (drawn small, then stretched), so it costs almost nothing per frame.
+const HALO = new Map();
+function halo(key, src){ if (HALO.has(key)) return HALO.get(key);
+  const w = Math.max(8, Math.round(src.width / 10)), h = Math.max(8, Math.round(src.height / 10));
+  const a = document.createElement('canvas'); a.width = w; a.height = h; const ax = a.getContext('2d'); ax.imageSmoothingQuality = 'high'; ax.drawImage(src, 0, 0, w, h);
+  const c = document.createElement('canvas'); c.width = w * 2; c.height = h * 2; const cx = c.getContext('2d'); cx.imageSmoothingQuality = 'high';
+  cx.drawImage(a, 0, 0, w * 2, h * 2); cx.globalAlpha = .6; cx.drawImage(a, -2, -1, w * 2 + 4, h * 2 + 2); HALO.set(key, c); return c; }
+function glowAt(key, src, x, y, w, h, t, k = 1){ const g = .5 + .5 * Math.sin(t * 2 * Math.PI / 3.4);
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = k * (.18 + .42 * g); ctx.drawImage(halo(key, src), x, y, w, h); ctx.restore(); return g; }
+function glowLayer(spec, t){ const im = imgs[spec.src]; if (!im) return;
+  const x = fit.x + ((spec.pos[0] - view.x) * view.z + M.w / 2) * fit.s, y = fit.y + ((spec.pos[1] - view.y) * view.z + M.h / 2) * fit.s;
+  glowAt(spec.src, im, x, y, im.width * spec.scale * view.z * fit.s, im.height * spec.scale * view.z * fit.s, t); }
+function handCanvas(text, size, y, x = null, emph = null){   // a line in the hand, on a full design-size canvas
+  const c = document.createElement('canvas'); c.width = 1920; c.height = 1080; const g = c.getContext('2d');
+  g.fillStyle = '#e2e8d4'; g.textBaseline = 'alphabetic'; g.font = `${size}px "JasonThin"`;
+  const w = g.measureText(text).width; if (x === null) x = (1920 - w) / 2; else if (x < 0) x = -x - w;   // negative x: right-aligned to -x
+  let e2 = null, g2 = null; if (emph){ e2 = document.createElement('canvas'); e2.width = 1920; e2.height = 1080; g2 = e2.getContext('2d'); g2.fillStyle = '#cfd8bd'; g2.textBaseline = 'alphabetic'; }
+  handLine(g, text, x, y, size, 'JasonThin', .75, emph, g2);
+  g.globalCompositeOperation = 'destination-in'; g.globalAlpha = 1; g.drawImage(tooth(), 0, 0, 1920, 1080);
+  if (e2){ g.globalCompositeOperation = 'source-over'; g.globalAlpha = .22; g.drawImage(e2, 0, 0); g.globalAlpha = 1; }   // touch / words / picture: fuller, still in the paper
+  const out = document.createElement('canvas'); out.width = 1920; out.height = 1080; const o = out.getContext('2d');
+  if ('filter' in o) o.filter = 'blur(.5px)'; o.drawImage(c, 0, 0); return { c:out, x0:x, x1:x + w, y };
+}
+const LINE_TEXT = 'touch the words and they come closer. touch the picture to let it go.';
+let LINE = null, lineT0 = null, holdT0 = null, HINT = null, usedRead = false;
+function titleHit(p){ if (p.x < 300 || p.x > 1620) return null; return p.y > 450 && p.y < 590 ? 'title' : p.y >= 590 && p.y < 685 ? 'line' : null; }
+let held = null;
+// phones: the piece was made for a computer screen, turned sideways. Say so in the same hand, but let them stay.
+const isPhone = () => matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 820;
+const isPortrait = () => innerHeight > innerWidth;
+const NOTES = {};
+function drawNote(ta){   // on a phone the words would be too small inside the picture, so they are set in the page instead
+  const el = document.getElementById('phone'); if (!isPhone()){ el.classList.remove('on'); return; }
+  document.getElementById('phonenote').textContent = isPortrait() ? 'this was made for a computer screen. if you stay, turn your phone sideways.' : 'this was made for a computer screen, but you can stay.';
+  el.classList.toggle('on', ta > .3 && !entered); }
 function schedule(t0, ev){ ev.t0 = t0; flashes.push(ev); }
 let lastPuff = 0;
 function cluster(t){
@@ -427,8 +497,19 @@ function frame(now){
     for (let k = 0; k < n; k++){ let lt = t - (OFF + k * STEP); if (lt < -LOOP / 2) lt += LOOP; if (lt > LOOP / 2) lt -= LOOP;
       if (lt > -1 && lt < STEP + 20) drawFrame(M.frames[k], lt); }
     if (t < OFF + 1){ const ta = Math.min((t - .5) / 2.6, 1 - (t - (OFF - 3.2)) / 2.6);
-      if (ta > 0){ if (!TITLE) TITLE = titleCanvas(); ctx.save(); ctx.globalCompositeOperation = 'screen';
-        drawWC('title', TITLE, fit.x, fit.y, M.w * fit.s, M.h * fit.s, Math.min(1, ta), .92); ctx.restore(); } }
+      if (ta > 0){ if (!TITLE) TITLE = titleCanvas(); ctx.save();
+        const closer = (which, cy) => { if (holdT0 === null || held !== which) return;   // only the words that were touched come closer
+          const h = ease((performance.now() / 1000 - holdT0) / 2.2), z = 1 + .3 * h, cx = fit.x + M.w / 2 * fit.s, y = fit.y + cy * fit.s;
+          ctx.translate(cx, y); ctx.scale(z, z); ctx.translate(-cx, -y); };
+        ctx.globalCompositeOperation = 'screen'; const tg = Math.min(1, ta);
+        ctx.save(); closer('title', 525);
+        if (tg >= .997) glowAt('title', TITLE, fit.x, fit.y, M.w * fit.s, M.h * fit.s, performance.now() / 1000, .9);
+        drawWC('title', TITLE, fit.x, fit.y, M.w * fit.s, M.h * fit.s, tg, .92); ctx.restore();
+        if (lineT0 !== null){ drawNote(ta); } if (lineT0 !== null && !isPhone()){ ctx.save(); closer('line', 645); if (!LINE) LINE = handCanvas(LINE_TEXT, 38, 652, null, new Set(['touch', 'words', 'picture']));
+          const la = Math.min(1, (performance.now() / 1000 - lineT0) / 2.4) * Math.min(1, ta);
+          if (la >= .997) glowAt('line', LINE.c, fit.x, fit.y, M.w * fit.s, M.h * fit.s, performance.now() / 1000 + .8, .9);
+          drawWC('line', LINE.c, fit.x, fit.y, M.w * fit.s, M.h * fit.s, la, .95); ctx.restore(); }
+        ctx.restore(); } }
     if (flashOn){ scheduler(); drawFlashes(); }
     updateAudio(clock, t);
     ctx.restore();
@@ -479,19 +560,35 @@ async function boot(){
 }
 const ready = boot();
 let idleT; function wake(){ document.body.classList.remove('idle'); clearTimeout(idleT); idleT = setTimeout(() => document.body.classList.add('idle'), 2500); }
-addEventListener('mousemove', e => { wake(); if (started) cv.style.cursor = (reading || zoomed) ? 'zoom-out' : inkUnder(e.clientX, e.clientY) ? LOUPE : 'pointer'; });
+// the cursor says what a touch will do: over the words "come closer", over the picture "let go"; it fades when the hand is still
+const cue = document.getElementById('cue'); let cueT = null;
+function setCue(e, text){ cue.textContent = text || '>'; cue.style.transform = `translate(${e.clientX}px, ${e.clientY}px) translate(-50%, -52%)`;   // centred on the pointer: it is the cursor
+  cue.classList.add('on'); clearTimeout(cueT); cueT = setTimeout(() => cue.classList.remove('on'), 2500); }
+addEventListener('mousemove', e => { if (started && M){ const words = !entered ? titleHit(toDesign(e.clientX, e.clientY)) : (closeness() <= .85 && inkUnder(e.clientX, e.clientY));
+  setCue(e, words ? '+' : '>'); } else setCue(e, '>'); });
+addEventListener('mouseleave', () => cue.classList.remove('on'));
+addEventListener('mousemove', e => { wake(); });
 let zoomed = false;
 function stepBack(){ const ar = autoRead(clock % LOOP);
   if (reading){ outFrom = { f:reading.f, w:reading.w }; reading = null; }
   else if (ar && ar.w > 0){ outFrom = { f:ar.f, w:ar.w }; }
   if (ar) dismissed.add(ar.visit); }
+function closeness(){   // how far the view has leaned in on the words: 0 = the whole picture, 1 = fully close
+  if (reading) return ease(reading.w); if (outFrom) return 0;
+  const ar = autoRead(clock % LOOP); return ar && !ar.dismissedAt ? ar.w : 0; }
 function advanceFromWords(){ const ar = autoRead(clock % LOOP); if (ar) dismissed.add(ar.visit);
   reading = null; outFrom = null; view = { z:1, x:M.w / 2, y:M.h / 2 }; clock = nextFrameStart() + 1.5; }
-cv.addEventListener('pointerdown', e => { if (!entered){ if (started) enter(); return; } if (firstTouch()) return; if (!started) return;
-  // zoomed in on the words: a click means carry on, to the next frame (only stepping back left people in the same long frame, which looked stalled)
-  if (zoomed || reading){ advanceFromWords(); return; }
+cv.addEventListener('pointerdown', e => { if (!entered){ if (!started || lineT0 === null) return; held = titleHit(toDesign(e.clientX, e.clientY)); if (held) holdT0 = performance.now() / 1000; enter(); return; } if (firstTouch()) return; if (!started) return;
+  // once the words are fully close and being read, any touch carries on (they fill the screen, so there is nowhere else to touch)
+  if (closeness() > .85){ advanceFromWords(); return; }
+  // on the words: they come (or stay) closer. Anywhere else while close: carry on to the next frame.
   const f = inkUnder(e.clientX, e.clientY);
-  if (f){ reading = { f, w:0, startedAt:clock }; return; }
+  if (f){ usedRead = true;
+    if (reading && reading.f === f){ reading.startedAt = clock; return; }                  // already close: keep them there a while longer
+    const ar = autoRead(clock % LOOP), w = zoomed && ar && ar.f === f ? ar.w : 0;
+    if (ar) dismissed.add(ar.visit);                                                        // the automatic lean-in hands over to this one
+    reading = { f, w, startedAt:clock }; outFrom = null; return; }
+  if (zoomed || reading){ advanceFromWords(); return; }
   // anywhere else: bring the words up now, or if they're already here, move on to the next frame
   const t = clock % LOOP, k = frameIdx(t);
   if (k < 0){ clock = nextFrameStart(); return; }
@@ -502,13 +599,13 @@ cv.addEventListener('pointerdown', e => { if (!entered){ if (started) enter(); r
 // click or key, so that first touch starts the sound and does nothing else.
 const startWhenTitle = setInterval(() => { if (!titleReady) return; clearInterval(startWhenTitle); started = true; wake(); }, 50);
 ready.then(() => { try { navigator.wakeLock?.request('screen').catch(() => {}); } catch(e){}
-  const show = () => { if (clock < 2.6) return setTimeout(show, 200); loadLine.classList.add('done'); enterBtn.hidden = false; requestAnimationFrame(() => enterBtn.classList.add('on')); enterBtn.focus({ preventScroll:true }); };
+  const show = () => { if (clock < 2.6) return setTimeout(show, 200); loadLine.classList.add('done'); lineT0 = performance.now() / 1000; };
   show(); });
 const loadLine = document.getElementById('loadline');
 setInterval(() => { if (!loadLine.classList.contains('done')) loadLine.style.setProperty('--p', Math.min(1, loaded / total)); }, 100);
 // the title waits under a quiet "enter": that click is what lets the browser play sound, so the sound is there from the start
 let entered = false; const enterBtn = document.getElementById('enter');
-function enter(){ if (entered) return; entered = true; heard = true; unlockAudio(); enterBtn.classList.remove('on'); setTimeout(() => enterBtn.hidden = true, 900);
+function enter(){ if (entered) return; entered = true; document.getElementById('phone').classList.remove('on'); heard = true; unlockAudio();
   try { document.documentElement.requestFullscreen?.().catch(() => {}); } catch(e){} }
 enterBtn.addEventListener('click', e => { e.stopPropagation(); enter(); });
 let heard = false;
@@ -519,7 +616,7 @@ function unlockAudio(){   // Safari and iOS only count some gestures, so every k
   } catch(e){} }
 ['click', 'pointerup', 'touchend', 'keydown', 'mousedown'].forEach(ev => addEventListener(ev, unlockAudio, { capture:true }));
 function firstTouch(e){ if (heard) return false; heard = true; unlockAudio(); return true; }
-addEventListener('keydown', e => { const k = e.key.toLowerCase(); wake(); if (!entered){ if (k === 'enter' || k === ' '){ e.preventDefault(); enter(); } return; } if (firstTouch() && k !== 'f') return;
+addEventListener('keydown', e => { const k = e.key.toLowerCase(); wake(); if (!entered){ if ((k === 'enter' || k === ' ') && lineT0 !== null){ e.preventDefault(); enter(); } return; } if (firstTouch() && k !== 'f') return;
   if (k === 'f'){ if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.().catch(() => {}); }
   else if (k === ' '){ e.preventDefault(); paused = !paused; }
   else if (k === 'escape'){ stepBack(); }

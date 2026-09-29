@@ -38,26 +38,22 @@
   #cue.on { opacity:.9; }
   #cue { text-shadow:0 0 3px rgba(0,0,0,.8), 0 0 8px rgba(226,232,212,.35); }
   @media (pointer:coarse) { #cue { display:none; } }
-  #wall { position:fixed; inset:0; z-index:6; background:#050705; color:#dfe3d2; display:flex; flex-direction:column; justify-content:center; gap:.8em; overflow-y:auto;
-    padding:24px 22px calc(24px + env(safe-area-inset-bottom,0px)); font-family:'JasonThinCSS', Georgia, serif; text-align:left; }
-  #wall h2 { font-weight:400; font-size:clamp(36px, min(21vw, 19vh), 140px); line-height:.95; margin:0; animation:breath 3.4s ease-in-out infinite; }
-  #wall p { margin:0; font-size:clamp(28px, min(13.5vw, 12vh), 84px); line-height:1.05; color:rgba(223,227,210,.9); max-width:14ch; }
-  #wall button { all:unset; align-self:flex-start; margin-top:.8em; font-size:clamp(16px, min(5.6vw, 5vh), 26px); color:rgba(223,227,210,.6); border-bottom:1px solid rgba(223,227,210,.35); padding-bottom:2px; cursor:pointer; }
-  #wall button:focus-visible { outline:2px solid #dfe3d2; outline-offset:6px; }
-  #more { position:fixed; left:50%; transform:translate(-50%, -50%); z-index:5; font:clamp(18px, 2.2vw, 34px)/1 'JasonThinCSS', Georgia, serif;
-    color:rgba(226,232,212,.5); text-decoration:none; border-bottom:1px solid rgba(226,232,212,.2); padding-bottom:3px; opacity:0; pointer-events:none; transition:opacity .4s linear;
-    animation:linkbreath 3.4s ease-in-out infinite; cursor:pointer !important; white-space:nowrap; }
-  @keyframes linkbreath { 0%,100% { color:rgba(226,232,212,.3); text-shadow:none; } 50% { color:rgba(226,232,212,.56); text-shadow:0 0 8px rgba(226,232,212,.16); } }
-  #more:hover { color:rgba(226,232,212,.7); animation:none; }
-  #more:focus-visible { outline:2px solid #e2e8d4; outline-offset:6px; }
+  #wall { position:fixed; inset:0; z-index:6; background:#050705; display:grid; place-items:center; overflow:hidden; }
+  #wall img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; animation:houses 22.5s ease-in-out infinite; }
+  #wall img:nth-child(2) { animation-delay:7.5s; } #wall img:nth-child(3) { animation-delay:15s; }
+  @keyframes houses { 0% { opacity:0 } 13% { opacity:.75 } 30% { opacity:.75 } 45% { opacity:0 } 100% { opacity:0 } }   /* the three houses from the opening, dissolving over each other */
+  #wall h2 { position:relative; margin:0; padding:0 18px; text-align:center; font:400 clamp(44px, min(15vw, 16vh), 120px)/1 'JasonThinCSS', Georgia, serif;
+    color:#e2e8d4; text-shadow:0 0 6px rgba(0,0,0,.7); animation:wordsbreath 5s ease-in-out infinite; }
+  @keyframes wordsbreath { 0%,100% { opacity:.25 } 50% { opacity:1 } }
+  @media (prefers-reduced-motion: reduce) { #wall img:first-child { opacity:.7; animation:none; } #wall h2 { animation:none; } }
   #enter.on { opacity:.55; }
   #enter:hover, #enter:focus-visible { opacity:1; outline:none; }
 </style>
 
 <canvas id="c"></canvas>
 <div id="wall" hidden>
-  <h2>this was made for a computer.</h2>
-  <p>open it on one, with the sound on.</p>
+  <img src="assets/open-1.jpg" alt=""><img src="assets/open-2.jpg" alt=""><img src="assets/open-3.jpg" alt="">
+  <h2>view on a computer</h2>
 </div>
 <div id="loadline"></div>
 <a id="more" href="https://jasonlindsey.art" target="_blank" rel="noopener">More works at JasonLindsey.art</a>
@@ -582,6 +578,7 @@ async function boot(){
   const fontLoads = [['JasonThin', 'Jason3-BrushThin.ttf'], ['JasonLight', 'Jason1-BrushLight.ttf']].map(([n, f]) =>
     new FontFace(n, `url(${BASE}fonts/${f})`).load().then(ff => document.fonts.add(ff)).catch(() => {}));
   await Promise.all([...fontLoads, ...OPEN.map((f, i) => loadImg(BASE + f, im => openImgs[i] = im))]); resize(); titleReady = true; openT0 = performance.now() / 1000;
+  if (matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 820) return;   // a phone only sees the note: don't spend its data on the rest
   FL = await (await fetch(BASE + 'flash/flash.json')).json();
   const fsrcs = [...FL.singles, ...(FL.people || []), ...Object.values(FL.seqs).flat()];
   const srcs = new Set(); for (const f of M.frames) for (const v of Object.values(f.layers)) srcs.add(v.src);

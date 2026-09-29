@@ -44,6 +44,12 @@
   #wall p { margin:0; font-size:clamp(28px, min(13.5vw, 12vh), 84px); line-height:1.05; color:rgba(223,227,210,.9); max-width:14ch; }
   #wall button { all:unset; align-self:flex-start; margin-top:.8em; font-size:clamp(16px, min(5.6vw, 5vh), 26px); color:rgba(223,227,210,.6); border-bottom:1px solid rgba(223,227,210,.35); padding-bottom:2px; cursor:pointer; }
   #wall button:focus-visible { outline:2px solid #dfe3d2; outline-offset:6px; }
+  #more { position:fixed; left:50%; transform:translate(-50%, -50%); z-index:5; font:clamp(18px, 2.2vw, 34px)/1 'JasonThinCSS', Georgia, serif;
+    color:rgba(226,232,212,.5); text-decoration:none; border-bottom:1px solid rgba(226,232,212,.2); padding-bottom:3px; opacity:0; pointer-events:none; transition:opacity .4s linear;
+    animation:linkbreath 3.4s ease-in-out infinite; cursor:pointer !important; white-space:nowrap; }
+  @keyframes linkbreath { 0%,100% { color:rgba(226,232,212,.3); text-shadow:none; } 50% { color:rgba(226,232,212,.56); text-shadow:0 0 8px rgba(226,232,212,.16); } }
+  #more:hover { color:rgba(226,232,212,.7); animation:none; }
+  #more:focus-visible { outline:2px solid #e2e8d4; outline-offset:6px; }
   #enter.on { opacity:.55; }
   #enter:hover, #enter:focus-visible { opacity:1; outline:none; }
 </style>
@@ -54,6 +60,7 @@
   <p>open it on one, with the sound on.</p>
 </div>
 <div id="loadline"></div>
+<a id="more" href="https://jasonlindsey.art" target="_blank" rel="noopener">More works at JasonLindsey.art</a>
 <div id="cue"></div>
 <div id="phone"><span><b>touch</b> the <b>words</b> and they come closer. <b>touch</b> the <b>picture</b> to let it go.</span><small id="phonenote"></small></div>
 <button id="enter" hidden>enter</button>
@@ -75,11 +82,12 @@ addEventListener('resize', resize);
 
 // ---------------- the score ----------------
 // per frame: [layer, in, fadeIn, out, fadeOut] in seconds from the frame's start
-const STEP = 78, OFF = 8;   // OFF: the title, before the first frame
+const STEP = 78, OFF = 14;   // title, then the credit, then the bedroom   // OFF: the title, before the first frame
 function frameIdx(t){ return t < OFF ? -1 : Math.min(M.frames.length - 1, Math.floor((t - OFF) / STEP)); }
 function nextFrameStart(){ const base = Math.floor(clock / LOOP) * LOOP, t = clock - base, k = frameIdx(t);
   if (k < 0) return base + OFF - .5;
-  if (k >= M.frames.length - 1) return base + LOOP;
+  if (k >= M.frames.length - 1){ const endC = OFF + (M.frames.length - 1) * STEP + 63;   // from the last frame, moving on goes to the end credit, not past it
+    return t < endC - 1 ? base + endC : base + LOOP; }
   return base + OFF + (k + 1) * STEP - 1.5; }   // next frame begins while the last words are still fading
 const SCORES = {
   bedroom: [ ['base', 0, 7, 64, 9], ['wide', 6, 10, 58, 8], ['ink', 7, 8, 70, 12] ],
@@ -272,7 +280,15 @@ function inkWords(text, size, x, y, font){
   if ('filter' in o) o.filter = 'blur(.45px)'; o.drawImage(c, 0, 0);
   return out;
 }
-let TITLE = null;
+let TITLE = null, CREDIT = null; const moreEl = document.getElementById('more');
+function creditCanvas(){
+  const c = document.createElement('canvas'); c.width = 1920; c.height = 1080; const g = c.getContext('2d');
+  g.fillStyle = '#e2e8d4'; g.textBaseline = 'alphabetic';
+  [['Photos and Story Experience', 50, 520], ['by Jason Lindsey', 36, 592]].forEach(([text, size, y]) => {
+    g.font = `${size}px "JasonThin"`; const w = g.measureText(text).width; handLine(g, text, (1920 - w) / 2, y, size, 'JasonThin', .7); });
+  g.globalCompositeOperation = 'destination-in'; g.globalAlpha = 1; g.drawImage(tooth(), 0, 0, 1920, 1080);
+  const out = document.createElement('canvas'); out.width = 1920; out.height = 1080; const o = out.getContext('2d');
+  if ('filter' in o) o.filter = 'blur(.6px)'; o.drawImage(c, 0, 0); return out; }
 function titleCanvas(){
   const c = document.createElement('canvas'); c.width = 1920; c.height = 1080; const g = c.getContext('2d');
   g.fillStyle = '#e2e8d4'; g.textBaseline = 'alphabetic'; const text = 'nobody remembers. dad does.', size = 90;
@@ -345,7 +361,7 @@ function scheduler(){
   if (t > nextCluster){ if (t % LOOP > OFF + 30) cluster(t); nextCluster = t + R(20, 42); }   // flashes are rarer: they are glimpses, not a rhythm   // after the title, the first frame is left alone for a while
   // the next frame arrives in glimpses before it becomes
   const start = nextFrameStart() + 1.5, idx = Math.round(start * 10);
-  if (start - t < 7 && !becomeDone.has(idx) && frameIdx((start + .01) % LOOP) >= 0){ becomeDone.add(idx);
+  if (start - t < 7 && !becomeDone.has(idx) && frameIdx((start + .01) % LOOP) >= 0 && frameIdx((start + .01) % LOOP) !== frameIdx(t % LOOP)){ becomeDone.add(idx);
     const nk = frameIdx((start + .01) % LOOP), f = M.frames[Math.max(0, nk)], im = imgs[f.layers.base.src];
     if (!im){ becomeDone.delete(idx); return; }
     (nk === 0 ? [[-1.4, .16, 4]] : [[-6.2, .22, 2], [-4.1, .3, 3], [-2.4, .45, 3], [-1.1, .5, 5]]).forEach(([dt, a, n]) => schedule(start + dt, { kind:'img', im, a, dur:n / 24 })); }
@@ -506,7 +522,16 @@ function frame(now){
     if (t < OFF + 5) drawOpen(t);   // under everything, so the bedroom develops over the last house
     for (let k = 0; k < n; k++){ let lt = t - (OFF + k * STEP); if (lt < -LOOP / 2) lt += LOOP; if (lt > LOOP / 2) lt -= LOOP;
       if (lt > -1 && lt < STEP + 20) drawFrame(M.frames[k], lt); }
-    if (t < OFF + 1){ const ta = Math.min((t - .5) / 2.6, 1 - (t - (OFF - 3.2)) / 2.6);
+    { // the end: the credit again, and a way to the rest of the work
+      const lt = t - (OFF + (n - 1) * STEP), ea = Math.max(0, Math.min((lt - 63) / 2.4, 1 - (lt - 76) / 1.6, 1));
+      if (ea > 0){ if (!CREDIT) CREDIT = creditCanvas(); ctx.save(); ctx.globalCompositeOperation = 'screen';
+        drawWC('credit', CREDIT, fit.x, fit.y, M.w * fit.s, M.h * fit.s, Math.min(1, ea), .9); ctx.restore(); }
+      const d = W / innerWidth; moreEl.style.top = ((fit.y + 670 * fit.s) / d) + 'px';
+      moreEl.style.opacity = ea; moreEl.style.pointerEvents = ea > .3 ? 'auto' : 'none'; }
+    if (t > 6 && t < 13.6){ const ca = Math.min((t - 6.6) / 2.2, 1 - (t - 11.2) / 2.2);   // the credit, between the title and the first frame
+      if (ca > 0){ if (!CREDIT) CREDIT = creditCanvas(); ctx.save(); ctx.globalCompositeOperation = 'screen';
+        drawWC('credit', CREDIT, fit.x, fit.y, M.w * fit.s, M.h * fit.s, Math.min(1, ca), .9); ctx.restore(); } }
+    if (t < 8){ const ta = Math.min((t - .5) / 2.6, 1 - (t - 4.8) / 2.6);
       if (ta > 0){ if (!TITLE) TITLE = titleCanvas(); ctx.save();
         const closer = (which, cy) => { if (holdT0 === null || held !== which) return;   // only the words that were touched come closer
           const h = ease((performance.now() / 1000 - holdT0) / 2.2), z = 1 + .3 * h, cx = fit.x + M.w / 2 * fit.s, y = fit.y + cy * fit.s;
@@ -576,7 +601,7 @@ if (isPhone()) wall.hidden = false;   // on a phone, say so plainly before anyth
 const cue = document.getElementById('cue'); let cueT = null;
 function setCue(e, text){ cue.textContent = text || '>'; cue.style.transform = `translate(${e.clientX}px, ${e.clientY}px) translate(-50%, -52%)`;   // centred on the pointer: it is the cursor
   cue.classList.add('on'); clearTimeout(cueT); cueT = setTimeout(() => cue.classList.remove('on'), 2500); }
-addEventListener('mousemove', e => { if (started && M){ const words = !entered ? titleHit(toDesign(e.clientX, e.clientY)) : (closeness() <= .85 && inkUnder(e.clientX, e.clientY));
+addEventListener('mousemove', e => { if (e.target === moreEl){ cue.classList.remove('on'); return; } if (started && M){ const words = !entered ? titleHit(toDesign(e.clientX, e.clientY)) : (closeness() <= .85 && inkUnder(e.clientX, e.clientY));
   setCue(e, words ? '+' : '>'); } else setCue(e, '>'); });
 addEventListener('mouseleave', () => cue.classList.remove('on'));
 addEventListener('mousemove', e => { wake(); });

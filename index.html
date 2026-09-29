@@ -38,11 +38,21 @@
   #cue.on { opacity:.9; }
   #cue { text-shadow:0 0 3px rgba(0,0,0,.8), 0 0 8px rgba(226,232,212,.35); }
   @media (pointer:coarse) { #cue { display:none; } }
+  #wall { position:fixed; inset:0; z-index:6; background:#050705; color:#dfe3d2; display:flex; flex-direction:column; justify-content:center; gap:.8em; overflow-y:auto;
+    padding:24px 22px calc(24px + env(safe-area-inset-bottom,0px)); font-family:'JasonThinCSS', Georgia, serif; text-align:left; }
+  #wall h2 { font-weight:400; font-size:clamp(36px, min(21vw, 19vh), 140px); line-height:.95; margin:0; animation:breath 3.4s ease-in-out infinite; }
+  #wall p { margin:0; font-size:clamp(28px, min(13.5vw, 12vh), 84px); line-height:1.05; color:rgba(223,227,210,.9); max-width:14ch; }
+  #wall button { all:unset; align-self:flex-start; margin-top:.8em; font-size:clamp(16px, min(5.6vw, 5vh), 26px); color:rgba(223,227,210,.6); border-bottom:1px solid rgba(223,227,210,.35); padding-bottom:2px; cursor:pointer; }
+  #wall button:focus-visible { outline:2px solid #dfe3d2; outline-offset:6px; }
   #enter.on { opacity:.55; }
   #enter:hover, #enter:focus-visible { opacity:1; outline:none; }
 </style>
 
 <canvas id="c"></canvas>
+<div id="wall" hidden>
+  <h2>this was made for a computer.</h2>
+  <p>open it on one, with the sound on.</p>
+</div>
 <div id="loadline"></div>
 <div id="cue"></div>
 <div id="phone"><span><b>touch</b> the <b>words</b> and they come closer. <b>touch</b> the <b>picture</b> to let it go.</span><small id="phonenote"></small></div>
@@ -306,7 +316,7 @@ const isPortrait = () => innerHeight > innerWidth;
 const NOTES = {};
 function drawNote(ta){   // on a phone the words would be too small inside the picture, so they are set in the page instead
   const el = document.getElementById('phone'); if (!isPhone()){ el.classList.remove('on'); return; }
-  document.getElementById('phonenote').textContent = isPortrait() ? 'this was made for a computer screen. if you stay, turn your phone sideways.' : 'this was made for a computer screen, but you can stay.';
+  document.getElementById('phonenote').textContent = isPortrait() ? 'turn your phone sideways.' : '';
   el.classList.toggle('on', ta > .3 && !entered); }
 function schedule(t0, ev){ ev.t0 = t0; flashes.push(ev); }
 let lastPuff = 0;
@@ -561,6 +571,8 @@ async function boot(){
 const ready = boot();
 let idleT; function wake(){ document.body.classList.remove('idle'); clearTimeout(idleT); idleT = setTimeout(() => document.body.classList.add('idle'), 2500); }
 // the cursor says what a touch will do: over the words "come closer", over the picture "let go"; it fades when the hand is still
+const wall = document.getElementById('wall');
+if (isPhone()) wall.hidden = false;   // on a phone, say so plainly before anything else
 const cue = document.getElementById('cue'); let cueT = null;
 function setCue(e, text){ cue.textContent = text || '>'; cue.style.transform = `translate(${e.clientX}px, ${e.clientY}px) translate(-50%, -52%)`;   // centred on the pointer: it is the cursor
   cue.classList.add('on'); clearTimeout(cueT); cueT = setTimeout(() => cue.classList.remove('on'), 2500); }
